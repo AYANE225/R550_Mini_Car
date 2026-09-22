@@ -31,3 +31,33 @@ def ate(pred_poses, gt_poses):
 def path_length(poses):
     d = np.diff(poses[:, :3, 3], axis=0)
     return float(np.sum(np.linalg.norm(d, axis=1)))
+
+
+def kitti_rpe(pred, gt, lengths=(100, 200, 300, 400, 500, 600, 700, 800), step=10):
+    """KITTI 里程计官方相对位姿误差：按 100..800m 子段平均。
+
+    对每个起点 i、每个段长 L，取沿 GT 行进 L 米后的帧 j，比较 pred 与 gt 的相对位姿：
+      err = (gt_i^{-1} gt_j)^{-1} (pred_i^{-1} pred_j)
+    平移误差归一化到 %/段长、旋转误差归一化到 deg/m，再对所有 (i,L) 平均。
+    pred/gt 均为 (N,4,4) 且用同一 body 约定（此处 velodyne），相对量与世界系无关。
+    """
+    from scipy.spatial.transform import Rotation
+    n = len(pred)
+    gt = gt[:n]
+    dist = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(gt[:, :3, 3], axis=0), axis=1))])
+    t_err, r_err = [], []
+    for i in range(0, n, step):
+        for L in lengths:
+            j = int(np.searchsorted(dist, dist[i] + L))
+            if j >= n:
+                continue
+            gt_rel = np.linalg.inv(gt[i]) @ gt[j]
+            pr_rel = np.linalg.inv(pred[i]) @ pred[j]
+            err = np.linalg.inv(gt_rel) @ pr_rel
+            t_err.append(np.linalg.norm(err[:3, 3]) / L)
+            r_err.append(Rotation.from_matrix(err[:3, :3]).magnitude() / L)
+    if not t_err:
+        return {'trans_err_pct': float('nan'), 'rot_err_deg_per_m': float('nan'), 'n_segments': 0}
+    return {'trans_err_pct': float(np.mean(t_err) * 100),
+            'rot_err_deg_per_m': float(np.rad2deg(np.mean(r_err))),
+            'n_segments': len(t_err)}
