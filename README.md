@@ -6,6 +6,22 @@
 > 库依赖：`numpy / scipy / open3d`（Open3D 用于 ICP 配准与位姿图优化）。数据为公开的
 > KITTI Odometry（velodyne 扫描 + 标定 + 真值位姿）。真值**仅用于评测**（declare→predict→evaluate）。
 
+## 效果图 / Gallery
+
+**系统输出分层金字塔**（轨迹 / 动态物体 / 激光点云 / 稠密建图）
+![pyramid](reports/pyramid_seq00.png)
+
+**SLAM + 检测 + 跟踪 实时演示（seq00 全程）**
+![demo](reports/demo_seq00.gif)
+
+| | |
+| --- | --- |
+| 回环前后轨迹 vs 真值 ![slam](reports/slam_seq00.png) | 多序列泛化 ![multi](reports/multi_seq.png) |
+| 建出的 2D 占据地图 + 轨迹 ![map](reports/map_seq00_bev.png) | 俯视激光点云（叠轨迹）![cloud](reports/cloud_bev_seq00.png) |
+| 先验图定位：误差有界 vs 里程计漂移 ![loc](reports/localize_seq00.png) | 建图上全局路径规划 ![nav](reports/nav_seq00.png) |
+| 检测 + 多目标跟踪（红=动/青=静）![track](reports/track_seq00.png) | 动态感知建图（剔除移动物）![clean](reports/clean_map_seq00.png) |
+| 车辆检测（有向框）![det](reports/detect_seq00_000000.png) | VGGT 前馈稠密重建（仅渲染）![vggt](reports/vggt_seq00_000000.png) |
+
 ## 流水线与结果（KITTI seq00，4541 帧 / 3737 m）
 
 | 阶段 | 方法 | 结果 |
