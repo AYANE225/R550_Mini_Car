@@ -22,7 +22,8 @@
 | 建出的 2D 占据地图 + 轨迹 ![map](reports/map_seq00_bev.png) | 俯视激光点云（叠轨迹）![cloud](reports/cloud_bev_seq00.png) |
 | 先验图定位：误差有界 vs 里程计漂移 ![loc](reports/localize_seq00.png) | 建图上全局路径规划 ![nav](reports/nav_seq00.png) |
 | 检测 + 多目标跟踪（红=动/青=静）![track](reports/track_seq00.png) | 动态感知建图（剔除移动物）![clean](reports/clean_map_seq00.png) |
-| 车辆检测（有向框）![det](reports/detect_seq00_000000.png) | VGGT 前馈稠密重建（仅渲染）![vggt](reports/vggt_seq00_000000.png) |
+| 车辆检测（经典几何有向框）![det](reports/detect_seq00_000000.png) | VGGT 前馈稠密重建（仅渲染）![vggt](reports/vggt_seq00_000000.png) |
+| 手写 PointPillars 预测（绿）vs GT（红）![pp](reports/det3d_pred_000025.png) | |
 
 ## 流水线与结果（KITTI seq00，4541 帧 / 3737 m）
 
@@ -89,6 +90,32 @@ KITTI seq00 相邻帧（~1 万点/帧，20 次平均）：
 即：自研 C++ 版**比等价 NumPy 快 ~8×**、与 Open3D 位姿一致，速度在成熟库 ~2.7× 以内——
 证明能自己写核心算法并用 C++/OpenMP/pybind11 落地，而非仅调库。
 
+### 从零手写 PointPillars 3D 检测（`det3d/`，纯 PyTorch）
+
+不依赖 OpenPCDet / mmdet3d / spconv，**从零实现**整条 PointPillars 检测器并在 KITTI
+3D-Object 上训练：点云 → pillar 体素化（9 维特征）→ PillarVFE → scatter 成伪图像 →
+SECOND 2D 骨干 → SSD 单类锚框头；损失用 focal（分类）+ smooth-L1（回归）+ 方向分类，
+锚框按 shapely 旋转 IoU 分配，推理走旋转 NMS + 方向消歧。4.81 M 参数，RTX5090 训 20 epoch。
+
+KITTI val（3712/3769 官方 split，1000 帧，Car BEV AP，R40 插值）：
+
+| 指标 | AP |
+| --- | --- |
+| **Car BEV AP@IoU 0.5** | **80.46** |
+| **Car BEV AP@IoU 0.7** | **70.06** |
+
+（未按 easy/mod/hard 分档、仅横向参考；AP@0.7 达 70 已是该架构的合理量级。）
+预测框（绿，带分数）与 GT（红）对齐见 `reports/det3d_pred_*.png`。
+
+```bash
+$PY scripts/det3d_train.py --epochs 20 --bs 6 --resume   # 训练（ckpt 每 300 iter，抗中断）
+$PY scripts/det3d_eval.py  --max-frames 1000 --score 0.1 # val Car BEV AP
+$PY scripts/det3d_vis_pred.py --split val --nth 12 --score 0.4  # 预测可视化
+```
+
+> 检测/跟踪还反哺了 SLAM：世界系恒速卡尔曼多目标跟踪判静/动，把动态物体附近的扫描点从
+> 建图中剔除，得到干净静态地图（`tracking.py` + `run_clean_map.py`）。
+
 ## 运行
 
 ```bash
@@ -112,7 +139,10 @@ kitti_slam/
   mapping.py       3D 体素地图 + 2D 占据栅格投影
   localize.py      MapLocalizer：scan-to-map ICP 先验地图定位
   planning.py      栅格 A* 全局规划（障碍膨胀 + 可行驶走廊）
-  metrics.py       SE(3) 对齐 ATE（真值仅在此用）
+  metrics.py       SE(3) 对齐 ATE + KITTI 官方相对误差（真值仅在此用）
+  tracking.py      世界系恒速卡尔曼多目标跟踪（判静/动，反哺建图去动态）
+det3d/             从零 PointPillars：kitti_det/voxelize/pointpillars/anchors/loss/dataset/infer
+native/            C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cpp）
 ```
 
 ## 设计要点 / 踩过的坑
@@ -126,6 +156,8 @@ kitti_slam/
 
 ## 路线图
 
+- ☑ 从零 PointPillars 3D 检测（Car BEV AP@0.7 70.06）+ 多目标跟踪 + 动态点剔除建图。
+- ☑ C++/Eigen point-to-plane ICP（pybind11，比 NumPy 快 ~8×）。
 - ☐ 更大 / 多楼层数据集（Newer College / Hilti，需子图 + 位姿图架构）。
 - ☐ 独立接入 VGGT 等前馈视觉模型作**视觉前端**（只调冻结权重，与 LiDAR 松耦合做消融）——
   独立实现，不复用任何非公开研究工程。
