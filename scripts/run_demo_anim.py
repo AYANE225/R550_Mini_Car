@@ -16,11 +16,34 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from kitti_slam import kitti_io as io
-from kitti_slam.detection import detect
+from kitti_slam.detection import Box3D, detect
 from kitti_slam.tracking import MOT
 
 
-def precompute(seq, start, end, idx, poses):
+def _classic_detector():
+    """经典几何检测(地面 RANSAC→DBSCAN→PCA 有向框)，返回 detect_fn(pts)->[Box3D]。"""
+    def fn(pts):
+        bx, _ = detect(pts, vehicles_only=True, voxel=0.2, ransac_iters=80, min_points=8)
+        return bx
+    return fn
+
+
+def _dl_detector(score=0.4):
+    """手写 PointPillars(在 KITTI 3D-Object 上训的 Car 检测)，返回 detect_fn(pts)->[Box3D]。
+    在 Odometry seq 上跑=跨数据集迁移演示。box 约定与 detection.Box3D.corners_bev 一致。"""
+    from det3d.anchors import generate_anchors
+    from scripts.det3d_vis_pred import load_model, infer_frame  # 复用推理管线
+    net, anchors = load_model(), generate_anchors(248, 216)
+
+    def fn(pts):
+        (boxes, _scores), _ = infer_frame(net, anchors, None, score=score, pts=pts)
+        return [Box3D(cx=float(b[0]), cy=float(b[1]), cz=float(b[2]),
+                      l=float(b[3]), w=float(b[4]), h=float(b[5]), yaw=float(b[6]), n=0)
+                for b in boxes]
+    return fn
+
+
+def precompute(seq, start, end, idx, poses, detect_fn):
     """逐帧检测+跟踪；只在动画帧(idx)存显示数据。返回 (scans,bg,boxes_w,egos,tracks)。"""
     show = set(idx)
     rng = np.random.default_rng(0)
@@ -30,7 +53,7 @@ def precompute(seq, start, end, idx, poses):
     for i in range(start, end):
         pts = io.read_velodyne(seq, i)
         P = poses[i]
-        bx, _ = detect(pts, vehicles_only=True, voxel=0.2, ransac_iters=80, min_points=8)
+        bx = detect_fn(pts)
         ctr = [P[:3, :3] @ np.array([b.cx, b.cy, b.cz]) + P[:3, 3] for b in bx]
         mot.step(np.array([c[:2] for c in ctr]) if ctr else np.empty((0, 2)), t=i * 0.1, dt=0.1)
         if i in show:
@@ -65,18 +88,24 @@ def main(argv=None):
     ap.add_argument('--fps', type=int, default=10)
     ap.add_argument('--dpi', type=int, default=60)
     ap.add_argument('--render-step', type=int, default=2, help='渲染时再抽帧(缩小 GIF)')
+    ap.add_argument('--detector', choices=['classic', 'dl'], default='classic',
+                    help='classic=几何有向框；dl=手写 PointPillars(3D-Object 训、跨数据集跑)')
+    ap.add_argument('--score', type=float, default=0.4, help='dl 检测分数阈值')
     args = ap.parse_args(argv)
 
     poses = np.load(ROOT / 'reports' / f'slam_seq{args.seq:02d}.npz')['opt']
     end = min(args.start + args.frames, len(poses))
     idx = list(range(args.start, end, args.stride))
-    cache = ROOT / 'reports' / f'demo_cache_seq{args.seq:02d}_{args.start}_{end}_{args.stride}.pkl'
+    cache = (ROOT / 'reports' /
+             f'demo_cache_seq{args.seq:02d}_{args.start}_{end}_{args.stride}_{args.detector}.pkl')
     if cache.exists():
         print(f'seq{args.seq:02d}: load cache {cache.name}')
         scans, bg, boxes_w, egos, tracks = pickle.load(open(cache, 'rb'))
     else:
-        print(f'seq{args.seq:02d}: track every frame {args.start}-{end}, animate stride {args.stride}')
-        scans, bg, boxes_w, egos, tracks = precompute(args.seq, args.start, end, idx, poses)
+        print(f'seq{args.seq:02d}: {args.detector} detect + track every frame '
+              f'{args.start}-{end}, animate stride {args.stride}')
+        detect_fn = _dl_detector(args.score) if args.detector == 'dl' else _classic_detector()
+        scans, bg, boxes_w, egos, tracks = precompute(args.seq, args.start, end, idx, poses, detect_fn)
         pickle.dump((scans, bg, boxes_w, egos, tracks), open(cache, 'wb'))
 
     traj = poses[args.start:end, :2, 3]
@@ -114,7 +143,8 @@ def main(argv=None):
         axg.plot(ex, ey, '^', color='w', ms=11)
         axg.set_xlim(*gxlim); axg.set_ylim(*gylim)
         # 右：跟车
-        axc.clear(); style(axc, 'chase view — detection (yellow) + tracks (red=dyn, cyan=static)')
+        det_lbl = 'PointPillars' if args.detector == 'dl' else 'geom'
+        axc.clear(); style(axc, f'chase view — {det_lbl} boxes (yellow) + tracks (red=dyn, cyan=static)')
         axc.scatter(acc[:, 0], acc[:, 1], s=0.6, c='#2c4', alpha=0.45, linewidths=0, rasterized=True)
         s = scans[k]
         axc.scatter(s[:, 0], s[:, 1], s=1.1, c=s[:, 2], cmap='turbo', linewidths=0, rasterized=True)
@@ -130,10 +160,13 @@ def main(argv=None):
             axc.plot(hh[-1, 1], hh[-1, 2], 'o', color=col, ms=5)
         axc.plot(ex, ey, '^', color='w', ms=13)
         axc.set_xlim(ex - args.win, ex + args.win); axc.set_ylim(ey - args.win, ey + args.win)
-        fig.suptitle(f'KITTI seq{args.seq:02d} — LiDAR SLAM + detection + tracking', color='w')
+        det_name = 'PointPillars' if args.detector == 'dl' else 'geometric'
+        fig.suptitle(f'KITTI seq{args.seq:02d} — LiDAR SLAM + {det_name} detection + tracking',
+                     color='w')
 
     anim = FuncAnimation(fig, lambda j: draw(rk[j]), frames=len(rk), interval=1000 / args.fps)
-    out = ROOT / 'reports' / f'demo_seq{args.seq:02d}.gif'
+    suffix = '_dl' if args.detector == 'dl' else ''
+    out = ROOT / 'reports' / f'demo_seq{args.seq:02d}{suffix}.gif'
     fig.patch.set_facecolor('#0b0b12')
     anim.save(out, writer=PillowWriter(fps=args.fps), dpi=args.dpi,
               savefig_kwargs={'facecolor': '#0b0b12'})

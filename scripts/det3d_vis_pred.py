@@ -27,8 +27,9 @@ def load_model(dev='cuda'):
     return net
 
 
-def infer_frame(net, anchors, idx, dev='cuda', score=0.3):
-    pts = kd.read_velodyne('training', idx)
+def infer_frame(net, anchors, idx, dev='cuda', score=0.3, pts=None):
+    if pts is None:
+        pts = kd.read_velodyne('training', idx)
     pil, coords, npt = points_to_pillars(pts)
     maxpts = pil.shape[1]
     mask = torch.arange(maxpts, device=dev)[None] < torch.from_numpy(npt).to(dev)[:, None]

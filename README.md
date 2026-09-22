@@ -13,8 +13,10 @@
 **系统输出分层金字塔**（轨迹 / 动态物体 / 激光点云 / 稠密建图）
 ![pyramid](reports/pyramid_seq00.png)
 
-**SLAM + 检测 + 跟踪 实时演示（seq00 全程）**
-![demo](reports/demo_seq00.gif)
+**SLAM + 检测 + 跟踪 实时演示（seq00）**
+左=固定全景（边跑边建图 + 轨迹），右=跟车（激光扫描 + 检测框 + 静/动航迹）。
+检测器用**从零手写的 PointPillars**（在 KITTI 3D-Object 上训、直接在 Odometry seq00 上跑，跨数据集迁移）：
+![demo](reports/demo_seq00_dl.gif)
 
 | | |
 | --- | --- |
@@ -111,6 +113,7 @@ KITTI val（3712/3769 官方 split，1000 帧，Car BEV AP，R40 插值）：
 $PY scripts/det3d_train.py --epochs 20 --bs 6 --resume   # 训练（ckpt 每 300 iter，抗中断）
 $PY scripts/det3d_eval.py  --max-frames 1000 --score 0.1 # val Car BEV AP
 $PY scripts/det3d_vis_pred.py --split val --nth 12 --score 0.4  # 预测可视化
+$PY scripts/run_demo_anim.py --detector dl --frames 800         # SLAM+PointPillars+跟踪 demo GIF
 ```
 
 > 检测/跟踪还反哺了 SLAM：世界系恒速卡尔曼多目标跟踪判静/动，把动态物体附近的扫描点从
