@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+# 可复现的中间数据/缓存（脚本可重生成）——不入库
+reports/*.npz
+reports/*.npy
+reports/*.pkl
+reports/*.log
