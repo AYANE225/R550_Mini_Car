@@ -64,8 +64,30 @@ scan-to-map + 回环 + 位姿图，除 seq02（长途少回环、里程计漂移
 
 ### 测试
 
-`pytest tests/`（17 项，纯几何/评测/跟踪/规划/检测核，合成数据、不依赖 KITTI/GPU）；
-GitHub Actions CI 每次 push 自动跑（见上方 badge）。
+`pytest tests/`（19 项，纯几何/评测/跟踪/规划/检测核 + C++ ICP 对拍，合成数据、不依赖 KITTI/GPU）；
+GitHub Actions CI 每次 push 自动装依赖、**编译 C++ 扩展**并跑测试（见上方 badge）。
+
+### C++/Eigen ICP 加速（`native/icp.cpp`，pybind11）
+
+从零实现的 **point-to-plane ICP**（Eigen 做 6-DOF 高斯牛顿、nanoflann KD 树找对应、
+OpenMP 并行累加），pybind11 暴露为 `kitti_slam.icp_cpp`。与 Open3D **同款线性化**，位姿对齐到 0.1 mm。
+
+```bash
+bash native/fetch_deps.sh   # 取 Eigen + nanoflann 到 third_party（或 apt install libeigen3-dev）
+bash native/build.sh        # 编译出 kitti_slam/icp_cpp*.so
+python scripts/bench_icp.py --seq 0 --frame 0   # 三后端对拍
+```
+
+KITTI seq00 相邻帧（~1 万点/帧，20 次平均）：
+
+| 后端 | 耗时 (ms) | fitness | 与 Open3D 位姿差 |
+| --- | --- | --- | --- |
+| **C++/Eigen (OpenMP)** | **12.3** | 0.945 | **0.1 mm** |
+| 纯 NumPy（同算法） | 101.5 | 0.945 | 0.1 mm |
+| Open3D（成熟库，多线程） | 4.6 | 0.945 | (ref) |
+
+即：自研 C++ 版**比等价 NumPy 快 ~8×**、与 Open3D 位姿一致，速度在成熟库 ~2.7× 以内——
+证明能自己写核心算法并用 C++/OpenMP/pybind11 落地，而非仅调库。
 
 ## 运行
 

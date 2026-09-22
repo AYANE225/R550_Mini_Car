@@ -17,6 +17,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy scipy open3d matplotlib pytest
+          pip install numpy scipy open3d matplotlib pytest pybind11
+      - name: Build C++ ICP extension
+        run: |
+          sudo apt-get update && sudo apt-get install -y libeigen3-dev
+          PY=python bash native/build.sh
       - name: Run tests
         run: pytest tests/ -q
