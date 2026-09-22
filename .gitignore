@@ -9,3 +9,8 @@ reports/*.pth
 # 编译产物 / 大体积第三方(header-only,用 native/fetch_deps.sh 或 apt 获取)
 *.so
 third_party/Eigen/
+# ROS2 colcon 构建产物 + 录制的 bag（可重建/重录）
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+reports/ros2_demo_bag/

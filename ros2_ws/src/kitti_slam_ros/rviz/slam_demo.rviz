@@ -1,0 +1,58 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Global Options:
+    Fixed Frame: map
+    Background Color: 11; 11; 18
+  Displays:
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Map
+      Topic:
+        Value: /map
+        Depth: 5
+        Reliability Policy: Reliable
+      Enabled: true
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+    - Class: rviz_default_plugins/PointCloud2
+      Name: LiveScan
+      Topic:
+        Value: /velodyne_points
+        Depth: 5
+        Reliability Policy: Reliable
+      Enabled: true
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: FlatColor
+      Color: 57; 208; 224
+    - Class: rviz_default_plugins/Path
+      Name: OdomPath
+      Topic:
+        Value: /odom_path
+        Reliability Policy: Reliable
+      Enabled: true
+      Color: 255; 210; 77
+      Line Style: Lines
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Detections
+      Topic:
+        Value: /detections
+        Reliability Policy: Reliable
+      Enabled: true
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 120
+      Pitch: 1.2
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0

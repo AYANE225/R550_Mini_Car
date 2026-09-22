@@ -22,6 +22,7 @@
 | ⚡ **从零 C++/Eigen ICP** | pybind11 + OpenMP，比等价 NumPy 快 **~8×**，与 Open3D 位姿差 **0.1 mm** |
 | 🔁 **感知反哺 SLAM** | 多目标跟踪判动/静 → 剔除动态点 → 干净静态地图 |
 | 🌈 **VGGT 深度耦合** | 前馈视觉大模型稠密重建按位姿 Sim(3) 融进 SLAM 世界系，相机对齐 **RMSE 6–20 cm** |
+| 🤖 **ROS2 在线化** | 自研里程计/建图/检测封装成 ROS2 节点，回放驱动、TF/PointCloud2/MarkerArray、RViz2 + `ros2 bag` |
 | ✅ **工程化** | 19 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
@@ -44,6 +45,9 @@
 | 先验图定位：误差有界 vs 里程计漂移 ![loc](reports/localize_seq00.png) | 建图上全局路径规划 ![nav](reports/nav_seq00.png) |
 | PointPillars 预测（绿）vs 真值（红）![pp](reports/det3d_pred_000025.png) | 动态感知建图（剔除移动车）![clean](reports/clean_map_seq00.png) |
 | VGGT 稠密重建深度耦合进 SLAM 世界系（叠轨迹验证配准）![vggt](reports/vggt_fused_seq00.png) | 相机 RGB 硬标定投影上色的真彩 LiDAR 地图 ![color](reports/color_map_seq00.png) |
+
+**ROS2 在线化：把整套栈跑成实时节点图**（数据集回放驱动，无需实车）
+![ros2](reports/ros2_graph.png)
 
 ---
 
@@ -110,6 +114,33 @@ pybind11 暴露成 `kitti_slam.icp_cpp`。与 Open3D 同款线性化，位姿对
 标定投影到每帧激光点、取像素 RGB 上色，再用 SLAM 位姿累积成**度量精确的真彩地图**（134 万点覆盖
 全 3.7 km 回环）。与 VGGT 各有侧重：VGGT 供**学习式稠密补全**（含图像未覆盖处），相机投影供
 **几何精确的真实颜色**（仅相机视野、无尺度歧义）。两条相机-LiDAR 融合路线都自己实现。
+
+---
+
+## 🤖 ROS2 在线化（`ros2_ws/`）
+
+把离线栈封装成**实时 ROS2 计算图**——用数据集/仿真回放当虚拟传感器,无需实车:
+
+| 节点 | 订阅 → 发布 | 复用的算法 |
+| --- | --- | --- |
+| `cloud_player` | → `/velodyne_points` (PointCloud2) | 数据集回放成虚拟 LiDAR |
+| `odometry_node` | `/velodyne_points` → `/odom` + `/tf` + `/odom_path` | 自研 scan-to-map 里程计 |
+| `mapping_node` | `/velodyne_points`+`/odom` → `/map` | 增量体素建图 |
+| `detection_node` | `/velodyne_points` → `/detections` (MarkerArray) | 几何车辆检测 |
+
+一条 `launch` 起全图 + RViz2；`ros2 bag` 可录制回放。用的是标准 tf2 / sensor_msgs / nav_msgs /
+vision_msgs 接口——**算法全复用工程里的 `kitti_slam` 模块,ROS2 只做在线封装**。
+
+```bash
+# RoboStack(conda,免 sudo)装 ROS2 Humble；把工程 numpy/scipy/open3d 装进该 env
+conda create -n ros2 -c conda-forge -c robostack-staging python=3.11 ros-humble-desktop
+cd ros2_ws && colcon build && source install/setup.bash
+export KITTI_SLAM_ROOT=$(cd .. && pwd)
+ros2 launch kitti_slam_ros slam_demo.launch.py seq:=0 rate:=10.0     # 一键起 + RViz2
+```
+
+> 实测:4 节点在线跑通,`/odom` 5 Hz、`/map` 增量增长、`/detections` 每帧出框,已用 `ros2 bag`
+> 录下 370 条消息/6 话题验证。RViz2 是 GUI,headless 环境下以节点图 + `ros2 bag info` 佐证。
 
 ---
 
@@ -188,6 +219,7 @@ kitti_slam/
   tracking.py      世界系卡尔曼多目标跟踪（反哺去动态）  metrics.py   ATE + KITTI 官方相对误差
 det3d/             从零 PointPillars（体素化 / 骨干 / 锚框 / 损失 / 推理）
 native/            C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cpp）
+ros2_ws/           ROS2 封装：cloud_player / odometry / mapping / detection 节点 + launch + rviz
 scripts/           各里程碑入口 + run_vggt_fuse（VGGT×LiDAR 深度耦合）+ plot_pyramid（五层图）
 ```
 
@@ -210,5 +242,6 @@ scripts/           各里程碑入口 + run_vggt_fuse（VGGT×LiDAR 深度耦合
 - ☑ 从零 PointPillars 3D 检测（AP@0.7 70.06）+ 多目标跟踪 + 动态点剔除建图
 - ☑ 从零 C++/Eigen ICP（pybind11，快 ~8×）
 - ☑ VGGT 前馈视觉大模型深度耦合（位姿锚定 Sim(3) 稠密融合，只调公开冻结权重）
+- ☑ ROS2 在线化（自研栈封装成实时节点图，回放驱动 + RViz2 + ros2 bag）
 - ☐ 把 VGGT 稠密融合升级为联合 BA / 深度约束进 ICP（当前为可视化级耦合）
 - ☐ 更大 / 多楼层场景（Newer College / Hilti，需子图 + 位姿图架构）
