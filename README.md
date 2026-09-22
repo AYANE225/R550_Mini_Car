@@ -43,7 +43,7 @@
 | 建出的城区占据地图 ![map](reports/map_seq00_bev.png) | 俯视激光点云（叠轨迹）![cloud](reports/cloud_bev_seq00.png) |
 | 先验图定位：误差有界 vs 里程计漂移 ![loc](reports/localize_seq00.png) | 建图上全局路径规划 ![nav](reports/nav_seq00.png) |
 | PointPillars 预测（绿）vs 真值（红）![pp](reports/det3d_pred_000025.png) | 动态感知建图（剔除移动车）![clean](reports/clean_map_seq00.png) |
-| VGGT 稠密重建深度耦合进 SLAM 世界系（叠轨迹验证配准）![vggt](reports/vggt_fused_seq00.png) | |
+| VGGT 稠密重建深度耦合进 SLAM 世界系（叠轨迹验证配准）![vggt](reports/vggt_fused_seq00.png) | 相机 RGB 硬标定投影上色的真彩 LiDAR 地图 ![color](reports/color_map_seq00.png) |
 
 ---
 
@@ -106,6 +106,11 @@ pybind11 暴露成 `kitti_slam.icp_cpp`。与 Open3D 同款线性化，位姿对
 > 只调**公开 VGGT 模型 + 官方权重**，**绝不导入任何非公开的融合研究工程**——耦合逻辑全为独立实现。
 > 这是位姿锚定的稠密融合，非联合 BA；诚实定位为"可视化级深度耦合"。
 
+**对照：相机-LiDAR 硬标定上色**（`scripts/run_color_map.py`）——把 KITTI 彩色相机按 `P2·Tr`
+标定投影到每帧激光点、取像素 RGB 上色，再用 SLAM 位姿累积成**度量精确的真彩地图**（134 万点覆盖
+全 3.7 km 回环）。与 VGGT 各有侧重：VGGT 供**学习式稠密补全**（含图像未覆盖处），相机投影供
+**几何精确的真实颜色**（仅相机视野、无尺度歧义）。两条相机-LiDAR 融合路线都自己实现。
+
 ---
 
 ## 🚀 快速开始
@@ -124,7 +129,8 @@ $PY scripts/det3d_train.py     --epochs 20 --bs 6 --resume        # 训 PointPil
 $PY scripts/det3d_eval.py      --max-frames 1000 --score 0.1      # val Car BEV AP
 $PY scripts/run_demo_anim.py   --detector dl --frames 800         # 上面那张 demo GIF
 
-# —— VGGT 视觉大模型深度耦合 ——
+# —— 相机-LiDAR 融合 ——
+$PY scripts/run_color_map.py   --seq 0 --stride 3                 # 相机 RGB 硬标定投影 → 真彩 LiDAR 图
 $PY scripts/run_vggt_fuse.py   --seq 0 --end 4541                 # VGGT 稠密重建融进 SLAM 世界系
 $PY scripts/plot_pyramid.py    --seq 0                            # 五层金字塔（⑤=VGGT×LiDAR）
 
