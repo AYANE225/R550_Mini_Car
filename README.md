@@ -21,6 +21,7 @@
 | 🚗 **从零手写 PointPillars** | 不碰 spconv/OpenPCDet，KITTI val Car BEV **AP@0.7 = 70.06** |
 | ⚡ **从零 C++/Eigen ICP** | pybind11 + OpenMP，比等价 NumPy 快 **~8×**，与 Open3D 位姿差 **0.1 mm** |
 | 🔁 **感知反哺 SLAM** | 多目标跟踪判动/静 → 剔除动态点 → 干净静态地图 |
+| 🌈 **VGGT 深度耦合** | 前馈视觉大模型稠密重建按位姿 Sim(3) 融进 SLAM 世界系，相机对齐 **RMSE 6–20 cm** |
 | ✅ **工程化** | 19 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
@@ -33,7 +34,7 @@
 
 ![demo](reports/demo_seq00_dl.gif)
 
-**四层金字塔：从原始激光到稠密地图**（轨迹 / 动态物体 / 激光点云 / 稠密建图）
+**五层金字塔：从稠密像素到抽象轨迹**（① 轨迹 / ② 动态物体 / ③ 激光点云 / ④ LiDAR 稠密图 / ⑤ VGGT×LiDAR 稠密重建）
 ![pyramid](reports/pyramid_seq00.png)
 
 | | |
@@ -42,6 +43,7 @@
 | 建出的城区占据地图 ![map](reports/map_seq00_bev.png) | 俯视激光点云（叠轨迹）![cloud](reports/cloud_bev_seq00.png) |
 | 先验图定位：误差有界 vs 里程计漂移 ![loc](reports/localize_seq00.png) | 建图上全局路径规划 ![nav](reports/nav_seq00.png) |
 | PointPillars 预测（绿）vs 真值（红）![pp](reports/det3d_pred_000025.png) | 动态感知建图（剔除移动车）![clean](reports/clean_map_seq00.png) |
+| VGGT 稠密重建深度耦合进 SLAM 世界系（叠轨迹验证配准）![vggt](reports/vggt_fused_seq00.png) | |
 
 ---
 
@@ -89,6 +91,23 @@ pybind11 暴露成 `kitti_slam.icp_cpp`。与 Open3D 同款线性化，位姿对
 
 ---
 
+## 🌈 VGGT 视觉大模型深度耦合（`scripts/run_vggt_fuse.py`）
+
+把前馈视觉几何大模型 **VGGT** 的稠密重建，真正**融进** LiDAR SLAM 的世界系——不是并排渲染：
+
+- VGGT 每个窗口前馈出稠密带色点云 + 相机位姿，但**单目、尺度任意、各窗口独立**；
+- LiDAR SLAM 给出**全局一致的度量位姿**（含回环 + 位姿图）；
+- 对每个窗口，用 VGGT 相机中心 vs SLAM 相机中心做 **含尺度的 Sim(3)（Umeyama）对齐**，
+  把稠密点旋进 SLAM 世界系并赋予真实米制尺度；多窗口累积 + 体素下采样成全局稠密带色地图。
+
+即 **LiDAR 定尺度与全局约束、VGGT 供稠密光度几何**，经相机位姿耦合。seq00 各窗口相机对齐
+**RMSE 仅 6–20 cm**，叠上 SLAM 轨迹即可肉眼验证配准（见效果图与金字塔第 ⑤ 层）。
+
+> 只调**公开 VGGT 模型 + 官方权重**，**绝不导入任何非公开的融合研究工程**——耦合逻辑全为独立实现。
+> 这是位姿锚定的稠密融合，非联合 BA；诚实定位为"可视化级深度耦合"。
+
+---
+
 ## 🚀 快速开始
 
 ```bash
@@ -104,6 +123,10 @@ $PY scripts/run_nav.py      --seq 0               # 全局路径规划
 $PY scripts/det3d_train.py     --epochs 20 --bs 6 --resume        # 训 PointPillars
 $PY scripts/det3d_eval.py      --max-frames 1000 --score 0.1      # val Car BEV AP
 $PY scripts/run_demo_anim.py   --detector dl --frames 800         # 上面那张 demo GIF
+
+# —— VGGT 视觉大模型深度耦合 ——
+$PY scripts/run_vggt_fuse.py   --seq 0 --end 4541                 # VGGT 稠密重建融进 SLAM 世界系
+$PY scripts/plot_pyramid.py    --seq 0                            # 五层金字塔（⑤=VGGT×LiDAR）
 
 # —— 自研 C++ ICP ——
 bash native/fetch_deps.sh && bash native/build.sh                 # 编译扩展
@@ -159,6 +182,7 @@ kitti_slam/
   tracking.py      世界系卡尔曼多目标跟踪（反哺去动态）  metrics.py   ATE + KITTI 官方相对误差
 det3d/             从零 PointPillars（体素化 / 骨干 / 锚框 / 损失 / 推理）
 native/            C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cpp）
+scripts/           各里程碑入口 + run_vggt_fuse（VGGT×LiDAR 深度耦合）+ plot_pyramid（五层图）
 ```
 
 <details>
@@ -179,5 +203,6 @@ native/            C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cp
 
 - ☑ 从零 PointPillars 3D 检测（AP@0.7 70.06）+ 多目标跟踪 + 动态点剔除建图
 - ☑ 从零 C++/Eigen ICP（pybind11，快 ~8×）
+- ☑ VGGT 前馈视觉大模型深度耦合（位姿锚定 Sim(3) 稠密融合，只调公开冻结权重）
+- ☐ 把 VGGT 稠密融合升级为联合 BA / 深度约束进 ICP（当前为可视化级耦合）
 - ☐ 更大 / 多楼层场景（Newer College / Hilti，需子图 + 位姿图架构）
-- ☐ 独立接入 VGGT 等前馈视觉模型作视觉前端（只调冻结权重，与 LiDAR 松耦合做消融，不复用任何非公开工程）
