@@ -12,6 +12,7 @@
 | 🎯 **SLAM 精度接近经典 LOAM** | 六序列平移误差均值 **0.82%**；seq00 回环后 ATE **4.85 → 2.25 m** |
 | 🔄 **外观级回环抗漂移** | 自写 Scan Context：漂移下召回持平 **0.51**（位置法从 0.96 塌到 **0**），ATE **5.08 → 1.77 m** |
 | 📍 **定位误差有界 5 cm** | 先验图 scan-to-map ICP，同段里程计已漂 7.7 m |
+| 🕹️ **闭环导航真开出去** | 全局 A* → 运动学自行车 + DWA 局部规划/控制把车开到终点：seq00 **651 m REACHED**、横向误差 **0.95 m**、反应式绕开 3 处全局图未知障碍 |
 | 🚗 **从零手写 PointPillars** | 不碰 spconv/OpenPCDet，KITTI val Car BEV **AP@0.7 = 70.06** |
 | ⚙️ **模型落地部署** | 折叠 BN 导出 ONNX（**数值对齐 2e-5**）+ 多后端时延对比：FP16 **1.74×**、Blackwell ORT-CUDA 跑通 |
 | ⚡ **从零 C++/Eigen ICP** | pybind11 + OpenMP，比 NumPy 快 **~8×**，与 Open3D 差 **0.1 mm** |
@@ -20,7 +21,7 @@
 | 🤖 **ROS2 在线化** | 自研栈封装成实时节点图，回放驱动 + RViz2 + `ros2 bag` |
 | 🛰️ **跨传感器泛化** | KITTI 栈**零改动**跑 nuScenes（HDL-32E，32 线），10 场景 ATE 均值 **0.34 m** |
 | 🌆 **KITTI-360 大场景** | 同栈零改动跑 KITTI-360 城区连续 **2.4 km**（3018 帧）：相对平移 **1.32%**、漂移主导 |
-| ✅ **工程化** | 28 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
+| ✅ **工程化** | 35 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
 
@@ -31,6 +32,9 @@
 
 **五层金字塔**：① 轨迹 / ② 动态物体 / ③ 激光点云 / ④ LiDAR 稠密图 / ⑤ VGGT×LiDAR 稠密重建。
 ![pyramid](reports/pyramid_seq00.png)
+
+**闭环导航（seq00）**：全局 A* 规一条 651 m 路，再用运动学自行车模型 + DWA 局部规划/控制**真把车开到终点**——沿途反应式绕开 3 处全局图未知的临时障碍，诚实报横向误差 / 余隙 / 是否到达（右下角放大展示一次真实尺度的绕障）。
+![localnav](reports/local_nav_seq00.png)
 
 | | |
 | --- | --- |
@@ -62,6 +66,7 @@
 | ③ 建图 | 3D 体素图 + 2D 占据栅格 | 310 万点，~600×600 m |
 | ④ 定位 | 先验图 scan-to-map ICP | RMSE **0.05 m（有界）** |
 | ⑤ 导航 | 占据图全局 A*（膨胀 + 可行驶走廊） | 起点→最远点 **650 m** |
+| ⑥ 闭环控制 | 运动学自行车模型 + pure-pursuit + DWA 局部避障 | 651 m 全程 **REACHED**、横向误差 **0.95 m** |
 
 **感知层**：手写 PointPillars 检测 → 卡尔曼多目标跟踪判动/静 → 剔除动态点得干净静态图。
 
@@ -80,6 +85,17 @@
 | 召回 | 0.96 | 0.78 | 0.32 | **0.00** | **0.51（平线，precision 1.00）** |
 
 端到端 ATE：里程计 **5.08 → 1.77 m**，优于位置法回环的 2.34 m。
+
+### 🕹️ 闭环导航 · 局部规划 + 控制（`kitti_slam/control.py`）
+
+全局 A* 只给一条几何路径；这里把它**真正开出去**：运动学自行车模型前向仿真，每步 pure-pursuit 定跟踪转向、DWA 在转向扇里 rollout 拒碰撞选最优，纵向按**转弯限速 + 到障碍的刹车距离**平滑调速（提前减速而非冲上去急刹）。驶过的 SLAM 轨迹当作已知可行走廊，再注入若干全局图未知的临时障碍演示反应式绕行——全离线、复用现有占据图、不依赖任何外部规划/控制库。
+
+| seq00（651 m 全局路线 · 注入 3 处临时障碍） | 结果 |
+| --- | --- |
+| 是否到达 | **REACHED**（实际行驶 623 m / 106 s 仿真） |
+| 横向跟踪误差 | 均值 **0.95 m**（急弯峰值 5.3 m：车像真车一样切过栅格路的 90° 直角） |
+| 最小余隙 | **1.08 m**（> 安全半径 1.0 m，全程未碰撞） |
+| 临时障碍 | 反应式绕开 **3/3**（全局规划器未知） |
 
 ### 🚗 手写 PointPillars 3D 检测（`det3d/`，纯 PyTorch）
 
@@ -190,6 +206,7 @@ $PY scripts/run_scan_context.py --seq 0            # 外观级回环
 $PY scripts/run_mapping.py      --seq 0
 $PY scripts/run_localize.py     --seq 0
 $PY scripts/run_nav.py          --seq 0
+$PY scripts/run_local_nav.py    --seq 0            # 闭环导航：全局A* + 局部DWA规划/控制
 $PY scripts/run_nuscenes.py     --all              # 跨传感器泛化
 $PY scripts/run_kitti360.py     --drive 0          # KITTI-360 大场景挑战
 
@@ -217,7 +234,7 @@ $PY scripts/bench_icp.py --seq 0 --frame 0
 
 ```
 kitti_slam/   odometry / loop / scan_context / posegraph / registration / mapping /
-              localize / planning / tracking / metrics / kitti_io / nuscenes_io / kitti360_io
+              localize / planning / control / tracking / metrics / kitti_io / nuscenes_io / kitti360_io
 det3d/        从零 PointPillars（体素化 / 骨干 / 锚框 / 损失 / 推理 / ONNX 部署）
 native/       C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cpp）
 ros2_ws/      ROS2 封装：cloud_player / nuscenes_player / odometry / mapping / detection
@@ -229,7 +246,7 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 <summary>⚙️ 性能 · 测试 · 设计要点</summary>
 
 - **性能**（单核 CPU + Open3D）：里程计 ~30 ms/帧 · 检测 ~21 ms/帧 · 定位 ~65 ms/帧；全序列里程计缓存 ~140 s、建图 ~112 s。
-- **测试**：`pytest tests/` 28 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
+- **测试**：`pytest tests/` 35 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
 - **坐标系**：里程计 velodyne 系（z 上）、KITTI 真值相机系（y 上），俯视图画 (x,z)；ATE 用 SE(3) 对齐。
 - **定位用 ICP 非 MCL**：似然域 MCL 大场景朝向弱约束、发散百米；scan-to-map ICP 可达亚分米。
 - **回环收伪**：ICP fitness ≥ 0.85 且 rmse ≤ 0.85 才接受，拒掉起点误匹配等伪回环。
@@ -240,6 +257,7 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 ## 🧭 路线图
 
 - ☑ 全栈 SLAM：里程计 → 回环（位置法 + 外观级 Scan Context）→ 位姿图 → 建图 → 定位 → 导航
+- ☑ 闭环导航：全局 A* + 运动学自行车 + DWA 局部规划/控制（seq00 651m REACHED、横向误差 0.95m、反应式避障）
 - ☑ 从零 PointPillars（AP@0.7 70.06）+ 多目标跟踪 + 动态点剔除建图
 - ☑ 模型落地部署：折叠 BN 导出 ONNX（数值对齐 2e-5）+ 多后端时延对比（FP16 1.74×、Blackwell ORT-CUDA / CPU）
 - ☑ 从零 C++/Eigen ICP（pybind11，快 ~8×）
