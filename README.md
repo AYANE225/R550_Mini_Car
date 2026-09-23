@@ -33,6 +33,21 @@
 **五层金字塔**：① 轨迹 / ② 动态物体 / ③ 激光点云 / ④ LiDAR 稠密图 / ⑤ VGGT×LiDAR 稠密重建。
 ![pyramid](reports/pyramid_seq00.png)
 
+<details>
+<summary>🔀 <b>交互版：一键分离五层</b>（真按钮切换 · 拖拽旋转 · 点图例显隐单层）</summary>
+
+> GitHub README 是被 sanitize 的 Markdown，跑不了 JS/onclick，内联做不出真按钮；
+> 于是把五层做成 [Plotly 3D 交互页 `docs/pyramid_seq00.html`](docs/pyramid_seq00.html)：
+> 左上「🔀 分离五层 / 📚 合并重叠」两个真按钮把五层整体拉开或叠回同一平面，
+> 右侧图例点一下单独显隐某层、双击只留一层，拖拽旋转俯仰、滚轮缩放。
+>
+> **打开方式**（HTML 在 github.com 上只显示源码，需下面任一途径渲染）：
+> - htmlpreview（零配置）：<https://htmlpreview.github.io/?https://github.com/AYANE225/VGGT-Lidar-SLAM/blob/main/docs/pyramid_seq00.html>
+> - 或开 GitHub Pages（Settings → Pages → main /root）后直达 `…/docs/pyramid_seq00.html`
+> - 或本地 `git clone` 后直接浏览器打开该文件
+
+</details>
+
 **闭环导航（seq00）**：全局 A* 规一条 651 m 路，再用运动学自行车模型 + DWA 局部规划/控制**真把车开到终点**——沿途反应式绕开 3 处全局图未知的临时障碍，诚实报横向误差 / 余隙 / 是否到达（右侧控制曲线随仿真时刻同步扫过）。
 ![localnav](reports/local_nav_seq00.gif)
 
@@ -208,6 +223,8 @@ $PY scripts/run_localize.py     --seq 0
 $PY scripts/run_nav.py          --seq 0 [--gif]    # 全局A*（--gif 路径逐点铺开动画）
 $PY scripts/run_local_nav.py    --seq 0 [--gif]    # 闭环导航：全局A* + 局部DWA规划/控制（--gif 小车实时开）
 $PY scripts/make_gifs.py        --which all        # 从缓存结果批量出 slam/定位 轨迹铺开 GIF
+$PY scripts/plot_pyramid.py             --seq 0    # 五层金字塔静态图
+$PY scripts/plot_pyramid_interactive.py --seq 0    # 五层金字塔交互 HTML（真按钮合并/分离）
 $PY scripts/run_nuscenes.py     --all              # 跨传感器泛化
 $PY scripts/run_kitti360.py     --drive 0 [--gif]  # KITTI-360 大场景挑战（--gif 2.4km 轨迹铺开）
 
