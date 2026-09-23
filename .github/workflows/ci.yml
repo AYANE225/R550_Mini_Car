@@ -20,7 +20,7 @@ jobs:
           pip install numpy scipy open3d matplotlib pytest pybind11
       - name: Build C++ ICP extension
         run: |
-          sudo apt-get update && sudo apt-get install -y libeigen3-dev
+          sudo apt-get update && sudo apt-get install -y libeigen3-dev libgl1 libegl1 libgomp1
           PY=python bash native/build.sh
       - name: Run tests
         run: pytest tests/ -q
