@@ -118,6 +118,50 @@ def render(r, out):
     print('  saved', out)
 
 
+def render_gif(r, out, fps=14, dpi=95):
+    """2.4 km 大场景轨迹**逐帧铺开**：真值(青)与我们的 LiDAR SLAM 估计(橙)一段段延伸，
+    漂移主导如实呈现。只增长、无移动 artist → disposal=1 让 GIF 帧间只编码增量，体积很小。"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+
+    m = r['m1'] if r['loops'] else r['m0']
+    g, a = m['gt_xyz'], m['aligned']
+    n = len(g)
+    fig, ax = plt.subplots(figsize=(9, 8)); fig.patch.set_facecolor(ps.BG)
+    ax.plot(g[:, 0], g[:, 1], '-', color=ps.GT, lw=2.2, alpha=0.22)       # 完整真值淡底(全貌)
+    gt_ln, = ax.plot([], [], '-', color=ps.GT, lw=2.2, label='KITTI-360 GT (cam0_to_world)')
+    es_ln, = ax.plot([], [], '--', color=ps.EST, lw=1.5, label='our LiDAR SLAM')
+    hd, = ax.plot([a[0, 0]], [a[0, 1]], 'o', color=ps.EST, ms=5)
+    ax.plot(g[0, 0], g[0, 1], 'o', color=ps.START, ms=11)
+    pad = 30
+    ax.set_xlim(g[:, 0].min() - pad, g[:, 0].max() + pad)
+    ax.set_ylim(g[:, 1].min() - pad, g[:, 1].max() + pad)
+    ax.set_aspect('equal'); ps.style_ax(ax); ps.style_legend(ax.legend(loc='best'))
+    ax.set_xlabel('x [m]'); ax.set_ylabel('y [m]')
+    ttl = fig.suptitle('', color=ps.FG, fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    ks = list(range(0, n, max(1, n // 90)))
+    if ks[-1] != n - 1:
+        ks.append(n - 1)
+
+    def update(kf):
+        gt_ln.set_data(g[:kf + 1, 0], g[:kf + 1, 1])
+        es_ln.set_data(a[:kf + 1, 0], a[:kf + 1, 1])
+        hd.set_data([a[kf, 0]], [a[kf, 1]])
+        ttl.set_text(f"KITTI-360 drive_{r['drive']:04d}  ·  HDL-64E  ·  our KITTI-built stack, zero retuning"
+                     f"\nATE={m['ate_rmse_m']:.2f} m  ·  rel {r['rpe']['trans_err_pct']:.2f}%  ·  "
+                     f"GT frame {kf}/{n - 1}")
+        return ()
+
+    anim = FuncAnimation(fig, update, frames=ks, interval=1000 / fps)
+    ps.save_gif(anim, out, fps=fps, dpi=dpi, disposal=1)
+    plt.close(fig)
+    print('  saved', out, f'({Path(out).stat().st_size/1e6:.1f} MB)')
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -127,6 +171,7 @@ def main(argv=None):
     ap.add_argument('--voxel', type=float, default=0.5)
     ap.add_argument('--no-loop', action='store_true')
     ap.add_argument('--out', default=None)
+    ap.add_argument('--gif', action='store_true', help='额外渲染 2.4km 轨迹逐帧铺开的动画 GIF')
     a = ap.parse_args(argv)
 
     r = run_drive(a.drive, a.start, a.count, a.voxel, do_loop=not a.no_loop)
@@ -137,6 +182,8 @@ def main(argv=None):
           f"({r['rpe']['n_segments']} seg)")
     out = a.out or str(ROOT / 'reports' / f'kitti360_d{a.drive:04d}.png')
     render(r, out)
+    if a.gif:
+        render_gif(r, str(ROOT / 'reports' / f'kitti360_d{a.drive:04d}.gif'))
     return 0
 
 

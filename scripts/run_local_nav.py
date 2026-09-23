@@ -66,6 +66,7 @@ def main(argv=None):
     ap.add_argument('--seq', type=int, default=0)
     ap.add_argument('--obstacles', type=int, default=3, help='注入的临时障碍数(全局图未知)')
     ap.add_argument('--out', default=None)
+    ap.add_argument('--gif', action='store_true', help='额外渲染闭环行驶动画 GIF')
     a = ap.parse_args(argv)
 
     mp = np.load(ROOT / 'reports' / f'map_seq{a.seq:02d}.npz')
@@ -99,6 +100,9 @@ def main(argv=None):
 
     render(a.seq, occ, res, x0, y0, traj, path, glen, r, obs, orad,
            a.out or str(ROOT / 'reports' / f'local_nav_seq{a.seq:02d}.png'))
+    if a.gif:
+        render_gif(a.seq, occ, res, x0, y0, path, glen, r, obs, orad,
+                   str(ROOT / 'reports' / f'local_nav_seq{a.seq:02d}.gif'))
     return 0
 
 
@@ -186,6 +190,94 @@ def render(seq, occ, res, x0, y0, traj, path, glen, r, obs, orad, out):
                  color=ps.FG, fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.97]); ps.savefig(fig, out, dpi=120)
     print('  saved', out)
+
+
+def render_gif(seq, occ, res, x0, y0, path, glen, r, obs, orad, out,
+               fps=14, dpi=54, target_frames=76):
+    """把闭环行驶**动起来**：左图车沿全局路真开(拖尾按速度着色、朝向箭头、遇临时障碍绕行)，
+    右侧速度/转向、横向误差/余隙曲线随仿真时刻游标同步扫过。持久 artist 增量更新(不逐帧重画占据图)。"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+    from matplotlib.gridspec import GridSpec
+    from kitti_slam import plotstyle as ps
+
+    st, cmds, m = r['states'], r['cmds'], r['metrics']
+    xte, clr = r['xte'], r['clr']
+    N = len(st)
+    spd = np.r_[cmds[:, 0], cmds[-1, 0]] if len(cmds) else np.zeros(N)   # 每个状态的速度
+    t_all = np.arange(len(cmds)) * 0.1
+    ks = list(range(0, N, max(1, N // target_frames)))
+    if ks[-1] != N - 1:
+        ks.append(N - 1)
+
+    fig = plt.figure(figsize=(16, 8.5)); fig.patch.set_facecolor(ps.BG)
+    gs = GridSpec(2, 2, width_ratios=[2.1, 1.0], figure=fig)
+    ax = fig.add_subplot(gs[:, 0]); ax.set_facecolor(ps.BG)
+    ext = [x0, x0 + occ.shape[1] * res, y0, y0 + occ.shape[0] * res]
+    ax.imshow(occ, origin='lower', extent=ext, cmap=ps.OCC, alpha=0.85)
+    ax.plot(path[:, 0], path[:, 1], '--', color=ps.GT, lw=1.6, label=f'global A* route {glen:.0f}m')
+    if len(obs):
+        for p in obs:
+            ax.add_patch(plt.Circle(p, orad, color='#ff3b52', alpha=0.9, zorder=5))
+        ax.scatter([], [], s=20, color='#ff3b52', label='injected obstacles (unknown to A*)')
+    ax.plot(*path[0], 'o', color=ps.START, ms=12, label='start')
+    ax.plot(*path[-1], '*', color=ps.EST, ms=18, mec='w', mew=0.6, label='goal')
+    pad = 25
+    ax.set_xlim(st[:, 0].min() - pad, st[:, 0].max() + pad)
+    ax.set_ylim(st[:, 1].min() - pad, st[:, 1].max() + pad)
+    ax.set_aspect('equal'); ps.style_legend(ax.legend(loc='upper right')); ps.style_ax(ax)
+    ax.set_xlabel('x [m]'); ax.set_ylabel('y [m]')
+    trail = ax.scatter(st[:1, 0], st[:1, 1], c=spd[:1], cmap='turbo', s=9,
+                       vmin=0.0, vmax=max(float(spd.max()), 1e-3), zorder=4)
+    fig.colorbar(trail, ax=ax, fraction=0.03, pad=0.01, label='speed [m/s]')
+    car, = ax.plot([st[0, 0]], [st[0, 1]], '^', color='w', ms=12, mec='k', mew=0.7, zorder=6)
+    head, = ax.plot([], [], '-', color='w', lw=2, zorder=6)
+    title = ax.set_title('')
+
+    a1 = fig.add_subplot(gs[0, 1]); a1.set_facecolor(ps.BG)
+    a1.plot(t_all, cmds[:, 0], color=ps.EST, lw=1.3, alpha=0.5)
+    a1b = a1.twinx()
+    a1b.plot(t_all, np.rad2deg(cmds[:, 1]), color=ps.GT, lw=0.9, alpha=0.45)
+    a1.set_title('control: speed & steering', color=ps.FG); ps.style_ax(a1)
+    a1.set_xlabel('sim time [s]'); a1.set_ylabel('speed [m/s]')
+    a1b.set_ylabel('steer [deg]', color=ps.GT); a1b.tick_params(colors=ps.GT)
+    cur1 = a1.axvline(0, color=ps.FG, lw=1.0, alpha=0.7)
+    dot1, = a1.plot([], [], 'o', color=ps.EST, ms=6)
+
+    a2 = fig.add_subplot(gs[1, 1]); a2.set_facecolor(ps.BG)
+    a2.plot(np.arange(len(xte)) * 0.1, xte, color=ps.EST, lw=1.2, alpha=0.55, label='cross-track err [m]')
+    a2.plot(np.arange(len(clr)) * 0.1, clr, color=ps.GT, lw=1.0, alpha=0.55, label='clearance [m]')
+    a2.axhline(1.0, color='#ff3b52', lw=0.8, ls=':', alpha=0.7, label='safety radius')
+    a2.set_title('tracking error & obstacle clearance', color=ps.FG)
+    a2.set_xlabel('sim time [s]'); a2.set_ylabel('[m]')
+    ps.style_legend(a2.legend(loc='best')); ps.style_ax(a2)
+    cur2 = a2.axvline(0, color=ps.FG, lw=1.0, alpha=0.7)
+
+    fig.suptitle(f'KITTI seq{seq:02d}: global plan + local DWA planning & control on SLAM-built map',
+                 color=ps.FG, fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+    hl = 4.5                                                 # 朝向箭头长度[m]
+    def update(k):
+        trail.set_offsets(st[:k + 1, :2]); trail.set_array(spd[:k + 1])
+        x, y, th = st[k]
+        car.set_data([x], [y])
+        head.set_data([x, x + hl * np.cos(th)], [y, y + hl * np.sin(th)])
+        tnow = k * 0.1
+        cur1.set_xdata([tnow, tnow]); cur2.set_xdata([tnow, tnow])
+        dot1.set_data([tnow], [spd[k]])
+        driven = float(np.sum(np.linalg.norm(np.diff(st[:k + 1, :2], axis=0), axis=1))) if k else 0.0
+        tag = 'REACHED' if (m['reached'] and k >= N - 1) else 'driving'
+        title.set_text(f"{tag}  ·  t={tnow:4.1f}s  ·  driven {driven:5.0f} m  ·  "
+                       f"v={spd[k]:.1f} m/s  ·  xte={xte[k]:.2f} m  ·  clr={clr[k]:.2f} m")
+        return trail, car, head, cur1, cur2, dot1, title
+
+    anim = FuncAnimation(fig, update, frames=ks, interval=1000 / fps)
+    ps.save_gif(anim, out, fps=fps, dpi=dpi)
+    plt.close(fig)
+    print('  saved', out, f'({Path(out).stat().st_size/1e6:.1f} MB)')
 
 
 if __name__ == '__main__':

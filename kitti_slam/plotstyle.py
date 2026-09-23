@@ -54,3 +54,34 @@ def savefig(fig, path, dpi=130):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=dpi, facecolor=fig.get_facecolor(), bbox_inches='tight')
     return path
+
+
+def optimize_gif(path, colors=112, disposal=2):
+    """PIL 复存：全帧共用一套调色板 + optimize 帧间裁剪，显著压小 README 里的 GIF 体积。
+    调色板取末帧（信息最全的一帧）以免 turbo 等渐变被截断；dither 关掉让静态背景逐帧一致。
+    disposal=1（只增长、无移动 artist 的动画，如轨迹铺开）可让 optimize 只编码变化区域，
+    体积骤降；disposal=2（有移动小车/游标需擦除）则逐帧全画。"""
+    from PIL import Image
+    im = Image.open(path)
+    rgb = []
+    try:
+        while True:
+            rgb.append(im.convert('RGB')); im.seek(im.tell() + 1)
+    except EOFError:
+        pass
+    dur = im.info.get('duration', 70)
+    pal = rgb[-1].convert('P', palette=Image.ADAPTIVE, colors=colors)
+    frames = [f.quantize(palette=pal, dither=Image.NONE) for f in rgb]
+    frames[0].save(path, save_all=True, append_images=frames[1:], loop=0,
+                   duration=dur, optimize=True, disposal=disposal)
+    return path
+
+
+def save_gif(anim, path, fps=14, dpi=54, colors=112, disposal=2):
+    """存 matplotlib 动画为深色 GIF 并压缩体积。anim=FuncAnimation。返回 path。"""
+    from pathlib import Path
+    from matplotlib.animation import PillowWriter
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    anim.save(path, writer=PillowWriter(fps=fps), dpi=dpi, savefig_kwargs={'facecolor': BG})
+    optimize_gif(path, colors=colors, disposal=disposal)
+    return path

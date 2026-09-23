@@ -21,7 +21,7 @@
 | 🤖 **ROS2 在线化** | 自研栈封装成实时节点图，回放驱动 + RViz2 + `ros2 bag` |
 | 🛰️ **跨传感器泛化** | KITTI 栈**零改动**跑 nuScenes（HDL-32E，32 线），10 场景 ATE 均值 **0.34 m** |
 | 🌆 **KITTI-360 大场景** | 同栈零改动跑 KITTI-360 城区连续 **2.4 km**（3018 帧）：相对平移 **1.32%**、漂移主导 |
-| ✅ **工程化** | 35 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
+| ✅ **工程化** | 37 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
 
@@ -33,14 +33,14 @@
 **五层金字塔**：① 轨迹 / ② 动态物体 / ③ 激光点云 / ④ LiDAR 稠密图 / ⑤ VGGT×LiDAR 稠密重建。
 ![pyramid](reports/pyramid_seq00.png)
 
-**闭环导航（seq00）**：全局 A* 规一条 651 m 路，再用运动学自行车模型 + DWA 局部规划/控制**真把车开到终点**——沿途反应式绕开 3 处全局图未知的临时障碍，诚实报横向误差 / 余隙 / 是否到达（右下角放大展示一次真实尺度的绕障）。
-![localnav](reports/local_nav_seq00.png)
+**闭环导航（seq00）**：全局 A* 规一条 651 m 路，再用运动学自行车模型 + DWA 局部规划/控制**真把车开到终点**——沿途反应式绕开 3 处全局图未知的临时障碍，诚实报横向误差 / 余隙 / 是否到达（右侧控制曲线随仿真时刻同步扫过）。
+![localnav](reports/local_nav_seq00.gif)
 
 | | |
 | --- | --- |
-| 回环前后 vs 真值 ![slam](reports/slam_seq00.png) | 六序列泛化 ![multi](reports/multi_seq.png) |
+| 回环前后 vs 真值 ![slam](reports/slam_seq00.gif) | 六序列泛化 ![multi](reports/multi_seq.png) |
 | 城区占据地图 ![map](reports/map_seq00_bev.png) | 俯视激光点云 ![cloud](reports/cloud_bev_seq00.png) |
-| 先验图定位（误差有界）![loc](reports/localize_seq00.png) | 全局路径规划 ![nav](reports/nav_seq00.png) |
+| 先验图定位（误差有界）![loc](reports/localize_seq00.gif) | 全局路径规划 ![nav](reports/nav_seq00.gif) |
 | PointPillars 预测（绿）vs 真值（红）![pp](reports/det3d_pred_000025.png) | 动态感知建图 ![clean](reports/clean_map_seq00.png) |
 | 外观级回环抗漂移（Scan Context）![sc](reports/scan_context_seq00.png) | VGGT 稠密重建融进 SLAM ![vggt](reports/vggt_fused_seq00.png) |
 | 相机 RGB 真彩 LiDAR 地图 ![color](reports/color_map_seq00.png) | VGGT 因子接回中断轨迹 ![dropout](reports/vggt_dropout_seq00.png) |
@@ -48,7 +48,7 @@
 | ROS2 实时节点图 ![ros2](reports/ros2_graph.png) | nuScenes 零改动泛化 ![nuscenes](reports/nuscenes_scene0.png) |
 
 **KITTI-360 大场景挑战**：KITTI 建的栈零改动跑 KITTI-360 城区连续 2.4 km，街区网格清晰、相对平移 1.32%。
-![k360](reports/kitti360_d0000.png)
+![k360](reports/kitti360_d0000.gif)
 
 **部署时延**：折叠 BN 导出 ONNX，单帧 NN 推理多后端对比（RTX 5090 / Blackwell sm_120）。
 ![deploy](reports/det3d_deploy_bench.png)
@@ -205,10 +205,11 @@ $PY scripts/run_slam.py         --seq 0 --frames -1
 $PY scripts/run_scan_context.py --seq 0            # 外观级回环
 $PY scripts/run_mapping.py      --seq 0
 $PY scripts/run_localize.py     --seq 0
-$PY scripts/run_nav.py          --seq 0
-$PY scripts/run_local_nav.py    --seq 0            # 闭环导航：全局A* + 局部DWA规划/控制
+$PY scripts/run_nav.py          --seq 0 [--gif]    # 全局A*（--gif 路径逐点铺开动画）
+$PY scripts/run_local_nav.py    --seq 0 [--gif]    # 闭环导航：全局A* + 局部DWA规划/控制（--gif 小车实时开）
+$PY scripts/make_gifs.py        --which all        # 从缓存结果批量出 slam/定位 轨迹铺开 GIF
 $PY scripts/run_nuscenes.py     --all              # 跨传感器泛化
-$PY scripts/run_kitti360.py     --drive 0          # KITTI-360 大场景挑战
+$PY scripts/run_kitti360.py     --drive 0 [--gif]  # KITTI-360 大场景挑战（--gif 2.4km 轨迹铺开）
 
 # 深度学习感知
 $PY scripts/det3d_train.py   --epochs 20 --bs 6 --resume
@@ -246,7 +247,7 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 <summary>⚙️ 性能 · 测试 · 设计要点</summary>
 
 - **性能**（单核 CPU + Open3D）：里程计 ~30 ms/帧 · 检测 ~21 ms/帧 · 定位 ~65 ms/帧；全序列里程计缓存 ~140 s、建图 ~112 s。
-- **测试**：`pytest tests/` 35 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
+- **测试**：`pytest tests/` 37 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
 - **坐标系**：里程计 velodyne 系（z 上）、KITTI 真值相机系（y 上），俯视图画 (x,z)；ATE 用 SE(3) 对齐。
 - **定位用 ICP 非 MCL**：似然域 MCL 大场景朝向弱约束、发散百米；scan-to-map ICP 可达亚分米。
 - **回环收伪**：ICP fitness ≥ 0.85 且 rmse ≤ 0.85 才接受，拒掉起点误匹配等伪回环。
