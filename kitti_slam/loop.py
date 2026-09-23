@@ -26,12 +26,14 @@ def detect_candidates(poses, min_gap=150, radius=20.0, stride=5):
 
 
 def verify(load_frame, poses, cand, voxel=0.5, max_dist=3.0,
-           min_fitness=0.85, max_rmse=0.85):
-    """对候选 (i,j) 做 ICP 验证。返回 (accepted, T_j_from_i, fitness, rmse)。"""
+           min_fitness=0.85, max_rmse=0.85, init=None):
+    """对候选 (i,j) 做 ICP 验证。返回 (accepted, T_j_from_i, fitness, rmse)。
+    init 缺省用里程计相对位姿作初值；漂移大时可外部传入(如 Scan Context 偏航)覆盖。"""
     i, j = cand
     src = preprocess(load_frame(i), voxel=voxel)     # 帧 i
     tgt = preprocess(load_frame(j), voxel=voxel)     # 帧 j
-    init = np.linalg.inv(poses[j]) @ poses[i]        # 里程计给的 T_j_from_i 初值
+    if init is None:
+        init = np.linalg.inv(poses[j]) @ poses[i]    # 里程计给的 T_j_from_i 初值
     T, fit, rmse = icp_point_to_plane(src, tgt, init=init, max_dist=max_dist, max_iter=60)
     accepted = fit >= min_fitness and rmse <= max_rmse
     return accepted, T, fit, rmse

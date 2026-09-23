@@ -13,6 +13,7 @@
 | --- | --- |
 | 🗺️ **完整栈自研** | 里程计 → 回环 → 位姿图 → 建图 → 定位 → 导航，一条龙跑通 |
 | 🎯 **SLAM 精度 LOAM 量级** | 多序列平移误差均值 **0.82%**；seq00 全程 3.7 km，回环后 ATE **4.85 → 2.25 m** |
+| 🔄 **外观级回环抗漂移** | 自写 Scan Context 按外观匹配、与里程计无关：漂移下召回持平 **0.51**（位置法从 0.96 塌到 **0**），端到端 ATE **5.08 → 1.77 m** |
 | 📍 **定位误差有界 5 cm** | 先验图上 scan-to-map ICP，同段里程计已漂 7.7 m |
 | 🚗 **从零手写 PointPillars** | 不碰 spconv/OpenPCDet，KITTI val Car BEV **AP@0.7 = 70.06** |
 | ⚡ **从零 C++/Eigen ICP** | pybind11 + OpenMP，比等价 NumPy 快 **~8×**，与 Open3D 位姿差 **0.1 mm** |
@@ -20,7 +21,7 @@
 | 🌈 **VGGT 深度耦合** | 从可视化级 Sim(3) 融合，到相对位姿因子进位姿图（里程计中断 ATE **11.18→0.51 m**），再到**点级联合 BA**（光度+点面同做一个最小二乘，LiDAR 盲区时误差平封 **0.11 m**） |
 | 🤖 **ROS2 在线化** | 自研里程计/建图/检测封装成 ROS2 节点，回放驱动、TF/PointCloud2/MarkerArray、RViz2 + `ros2 bag` |
 | 🛰️ **跨传感器泛化** | KITTI 建的栈**零改动**直接跑 nuScenes（Velodyne HDL-32E，32 线／别家车队），10 场景 ATE 均值 **0.34 m** |
-| ✅ **工程化** | 19 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
+| ✅ **工程化** | 22 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
 
@@ -68,6 +69,38 @@
 
 之上再叠一层**感知**：手写 PointPillars 逐帧检测车辆 → 世界系卡尔曼多目标跟踪判动/静 →
 把动态物体附近的点从地图里剔掉，得到干净的静态地图。检测既能当独立能力展示，也真正回馈了建图质量。
+
+---
+
+## 🔄 外观级回环：里程计漂移也能找回闭环（`kitti_slam/scan_context.py`）
+
+位置法回环（stage ②）靠"两次经过同一地点、里程计坐标要足够近"来找候选——里程计一旦漂移，
+重访点在里程计系里被推开，闭环就漏检。**Scan Context**（Kim & Kim, IROS 2018，自己从零写）
+换个思路，**按外观匹配、与里程计位置无关**：把一帧激光的水平面切成极坐标（环×扇区）栅格、每格
+存最大高度，得到一张"场景指纹"；逐环均值构成**旋转不变环键**建 KD 树筛候选，再按扇区循环平移
+求**列移不变距离**（顺带解出相对偏航）。
+
+在 seq00 上用 GT 定义"真闭环"，对比两种前端的召回——把位置法的搜索半径逐步收紧，模拟里程计
+漂移越来越致命：
+
+| 前端 | 召回 | 说明 |
+| --- | --- | --- |
+| 位置法 r=20 m | 0.96 | 里程计几乎不漂时才成立 |
+| 位置法 r=10 m | 0.78 | |
+| 位置法 r=5 m | 0.32 | 漂移 5 m 就漏掉三分之二 |
+| 位置法 r=2 m | **0.00** | 漂移一大全盘失效 |
+| **Scan Context** | **0.51** | **与半径无关的平线，precision 1.00** |
+
+![sc](reports/scan_context_seq00.png)
+
+关键的收尾：Scan Context 的**相对偏航**（列移量）还能当 ICP 验证的初值——真回环两帧本就共位，
+用 `Rz(-yaw)` + 零平移作初值即可，**完全不碰里程计相对位姿**。这点很要命：里程计漂到 seq00 末尾时，
+`inv(odom[j])@odom[i]` 会把重访两帧的点云推到**几公里外**（实测初值平移误差 >4000 m），ICP 直接
+fit=0；而 SC 偏航初值让同样这些回环稳稳 fit=1.00。端到端把 10 个 SC 回环喂进同一个位姿图：
+
+> **ATE：里程计 5.08 m → Scan-Context 回环 1.77 m**（还优于位置法回环的 2.34 m）——外观级前端在
+> 漂移下反而更强，因为它根本不依赖那个正在漂的量。和 VGGT 那几步一个道理：**主通道退化时，换一路
+> 不相关的观测顶上**。纯 numpy/scipy，`python scripts/run_scan_context.py --seq 0`。
 
 ---
 
@@ -244,6 +277,7 @@ PY=/media/4T/cst/envs/vggt-slam/bin/python3     # 只借 numpy/scipy/open3d，�
 
 # —— SLAM → 定位 → 导航 ——
 $PY scripts/run_slam.py     --seq 0 --frames -1   # 里程计 + 回环 + 位姿图（缓存位姿 & npz）
+$PY scripts/run_scan_context.py --seq 0           # 外观级回环(Scan Context)召回对比 + 端到端 ATE
 $PY scripts/run_mapping.py  --seq 0               # 建 3D/2D 地图
 $PY scripts/run_localize.py --seq 0               # scan-to-map 先验图定位
 $PY scripts/run_nav.py      --seq 0               # 全局路径规划
@@ -299,7 +333,7 @@ KITTI 官方相对误差（`scripts/eval_kitti.py`，真值只用来评测）：
 <details>
 <summary>测试 & CI</summary>
 
-`pytest tests/`：19 项，覆盖评测 / 跟踪 / 规划 / 检测核 + C++ ICP 对拍，
+`pytest tests/`：22 项，覆盖评测 / 跟踪 / 规划 / 检测核 + Scan Context 描述子 + C++ ICP 对拍，
 用合成数据、不依赖 KITTI/GPU。GitHub Actions 每次 push 自动装依赖、**编译 C++ 扩展**并跑测试。
 
 </details>
@@ -315,6 +349,7 @@ kitti_slam/
   localize.py      scan-to-map 先验图定位           planning.py   栅格 A* 全局规划
   tracking.py      世界系卡尔曼多目标跟踪（反哺去动态）  metrics.py   ATE + KITTI 官方相对误差
   kitti_io.py      KITTI Odometry 读取              nuscenes_io.py  nuScenes(HDL-32E) 读取(跨传感器泛化)
+  scan_context.py  外观级回环描述子(极坐标指纹, 抗里程计漂移)
 det3d/             从零 PointPillars（体素化 / 骨干 / 锚框 / 损失 / 推理）
 native/            C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cpp）
 ros2_ws/           ROS2 封装：cloud_player / nuscenes_player / odometry / mapping / detection + launch
@@ -344,4 +379,5 @@ scripts/           各里程碑入口 + run_nuscenes（nuScenes 泛化）+ run_v
 - ☑ 跨传感器泛化：KITTI 建的栈零改动跑 nuScenes（Velodyne HDL-32E），10 场景 ATE 均值 0.34 m
 - ☑ VGGT 因子级 + 点级深耦合：相对位姿因子进位姿图（里程计中断 ATE 11.18→0.51 m）、稠密点补进 ICP（激光抽到 245 点时旋转 2.46°→0.47°）
 - ☑ 点级联合 BA / 光度残差：VGGT 光度残差 + LiDAR 点面残差同做一个最小二乘（由粗到细金字塔）；LiDAR 盲区漂移 1.5 m 时光度项把 ATE 平封在 0.11 m（纯激光 0.74 m）
+- ☑ 外观级回环（Scan Context，自写）：按外观匹配、与里程计无关，漂移下召回持平 0.51（位置法从 0.96 塌到 0）；SC 偏航当 ICP 初值救回漂移下 fit=0 的验证，端到端 ATE 5.08→1.77 m
 - ☐ 更大 / 多楼层场景（Newer College / Hilti，需子图 + 位姿图架构）
