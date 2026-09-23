@@ -21,7 +21,7 @@
 | 🚗 **从零手写 PointPillars** | 不碰 spconv/OpenPCDet，KITTI val Car BEV **AP@0.7 = 70.06** |
 | ⚡ **从零 C++/Eigen ICP** | pybind11 + OpenMP，比等价 NumPy 快 **~8×**，与 Open3D 位姿差 **0.1 mm** |
 | 🔁 **感知反哺 SLAM** | 多目标跟踪判动/静 → 剔除动态点 → 干净静态地图 |
-| 🌈 **VGGT 深度耦合** | 稠密重建按 Sim(3) 融进世界系（相机对齐 **6–20 cm**）；相对位姿因子进位姿图，**里程计中断时 ATE 11.18→0.51 m** |
+| 🌈 **VGGT 深度耦合** | 从可视化级 Sim(3) 融合，到相对位姿因子进位姿图（里程计中断 ATE **11.18→0.51 m**），再到**点级联合 BA**（光度+点面同做一个最小二乘，LiDAR 盲区时误差平封 **0.11 m**） |
 | 🤖 **ROS2 在线化** | 自研里程计/建图/检测封装成 ROS2 节点，回放驱动、TF/PointCloud2/MarkerArray、RViz2 + `ros2 bag` |
 | 🛰️ **跨传感器泛化** | KITTI 建的栈**零改动**直接跑 nuScenes（Velodyne HDL-32E，32 线／别家车队），10 场景 ATE 均值 **0.34 m** |
 | ✅ **工程化** | 19 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
@@ -47,6 +47,7 @@
 | PointPillars 预测（绿）vs 真值（红）![pp](reports/det3d_pred_000025.png) | 动态感知建图（剔除移动车）![clean](reports/clean_map_seq00.png) |
 | VGGT 稠密重建深度耦合进 SLAM 世界系（叠轨迹验证配准）![vggt](reports/vggt_fused_seq00.png) | 相机 RGB 硬标定投影上色的真彩 LiDAR 地图 ![color](reports/color_map_seq00.png) |
 | **VGGT 因子进后端：LiDAR 里程计中断→视觉接回轨迹（ATE 11.18→0.51 m）** ![dropout](reports/vggt_dropout_seq00.png) | 干净 vs 中断双场景对比（干净打平、中断见价值）![couple](reports/vggt_couple_seq00.png) |
+| **点级联合 BA：LiDAR 盲区漂移下，光度项把误差平封在 ~0.11 m** ![ba](reports/vggt_ba_seq00.png) | VGGT 稠密点补进 ICP：激光越稀视觉越救命 ![icp](reports/vggt_icp_seq00.png) |
 
 **ROS2 在线化：把整套栈跑成实时节点图**（数据集回放驱动，无需实车）
 ![ros2](reports/ros2_graph.png)
@@ -156,6 +157,35 @@ seq00 上每个窗口的相机对齐误差只有 **6–20 cm**，叠上 SLAM 轨
 相机投到每帧激光点上、取像素颜色，再用 SLAM 位姿拼成一张 134 万点、覆盖全程 3.7 km 的真彩地图。
 和 VGGT 各有所长：VGGT 会"脑补"出图像没拍到的地方，相机投影则是分毫不差的真实颜色（但只在相机视野内）。
 
+### 最后一步：点级联合 BA / 光度残差（`scripts/run_vggt_ba.py`）
+
+前面两步——相对位姿因子进后端、稠密点补进 ICP——都把 VGGT 先"约化"成位姿或点堆再喂给优化器。
+这一步下到最底层，做**真正的联合光束法平差**：把一个滑窗内所有帧的位姿放进同一个最小二乘，残差
+直接来自两类原始观测——
+
+- **光度残差（VGGT）**：用 VGGT 每帧深度把 host 像素反投影，按当前位姿投到 target 帧，比灰度差；
+- **点面残差（LiDAR）**：host 帧激光点按当前位姿投到 target 帧，算点到最近面的距离（每轮重找对应）。
+
+两类残差带相对权重拼进同一个 Gauss-Newton（`scipy.least_squares`），**同时**优化窗口位姿。为撑开直接
+法那个出了名小的收敛域，光度项走**由粗到细四层金字塔**；规范自由度用"只优化经激活边能从参考帧到达
+的位姿"来固定。这才是点级/光度联合优化，而不是把某个传感器压成一条位姿边。
+
+结论仍分两半（seq00，8 帧窗口）：
+
+| 场景 | LiDAR-only BA | LiDAR + VGGT 光度 BA |
+| --- | --- | --- |
+| **干净数据** | ATE 0.036 m / 0.06° | ATE 0.032 m / 0.03°（≈ 打平） |
+| **LiDAR 盲区漂移 0.2 m** | ATE 0.121 m / 0.42° | ATE **0.114 m / 0.09°** |
+| **LiDAR 盲区漂移 1.5 m** | ATE **0.740 m / 2.36°** | ATE **0.114 m / 0.09°** |
+
+![ba](reports/vggt_ba_seq00.png)
+
+干净 64 线上激光点面已经把位姿约束得很死，光度项加进来基本打平——和前两步、和 IMU 那次一样，不藏。
+真正见价值的还是**主传感器退化**：我让窗口中间几帧的 LiDAR 点面项失效（模拟激光遮挡/盲区），只让它们
+的位姿带一个逐渐加大的初始漂移。纯激光的误差随漂移**线性长上去**（0.12 → 0.74 m），而光度项把整段
+误差**平封在 ~0.11 m**——只要漂移还落在直接法的收敛域里（10 Hz 下约 2 m），视觉就稳稳把位姿接住。
+超过这个盆地直接法会跳出去，这条限制我在图里直接写明。仍然只调公开 VGGT 权重，BA 逻辑全自己写。
+
 ---
 
 ## 🤖 ROS2 在线化（`ros2_ws/`）
@@ -233,6 +263,7 @@ $PY scripts/run_color_map.py   --seq 0 --stride 3                 # 相机 RGB �
 $PY scripts/run_vggt_fuse.py   --seq 0 --end 4541                 # VGGT 稠密重建融进 SLAM 世界系
 $PY scripts/run_vggt_couple.py --seq 0 --gap 150,190             # VGGT 相对位姿因子进位姿图(里程计中断验证)
 $PY scripts/run_vggt_icp.py    --seq 0 --fracs 0.03,0.005,0.002  # VGGT 稠密点补进 ICP(激光抽稀鲁棒性)
+$PY scripts/run_vggt_ba.py     --seq 0 --start 100 --count 8     # 点级联合 BA(光度+点面同做一个最小二乘)
 $PY scripts/plot_pyramid.py    --seq 0                            # 五层金字塔（⑤=VGGT×LiDAR）
 
 # —— 自研 C++ ICP ——
@@ -316,5 +347,5 @@ scripts/           各里程碑入口 + run_nuscenes（nuScenes 泛化）+ run_v
 - ☑ ROS2 在线化（自研栈封装成实时节点图，回放驱动 + RViz2 + ros2 bag）
 - ☑ 跨传感器泛化：KITTI 建的栈零改动跑 nuScenes（Velodyne HDL-32E），10 场景 ATE 均值 0.34 m
 - ☑ VGGT 因子级 + 点级深耦合：相对位姿因子进位姿图（里程计中断 ATE 11.18→0.51 m）、稠密点补进 ICP（激光抽到 245 点时旋转 2.46°→0.47°）
-- ☐ 再往上做**点级联合 BA / 光度残差**（当前是点补进 ICP，尚非联合优化）
+- ☑ 点级联合 BA / 光度残差：VGGT 光度残差 + LiDAR 点面残差同做一个最小二乘（由粗到细金字塔）；LiDAR 盲区漂移 1.5 m 时光度项把 ATE 平封在 0.11 m（纯激光 0.74 m）
 - ☐ 更大 / 多楼层场景（Newer College / Hilti，需子图 + 位姿图架构）
