@@ -21,7 +21,7 @@
 | 🚗 **从零手写 PointPillars** | 不碰 spconv/OpenPCDet，KITTI val Car BEV **AP@0.7 = 70.06** |
 | ⚡ **从零 C++/Eigen ICP** | pybind11 + OpenMP，比等价 NumPy 快 **~8×**，与 Open3D 位姿差 **0.1 mm** |
 | 🔁 **感知反哺 SLAM** | 多目标跟踪判动/静 → 剔除动态点 → 干净静态地图 |
-| 🌈 **VGGT 深度耦合** | 前馈视觉大模型稠密重建按位姿 Sim(3) 融进 SLAM 世界系，相机对齐 **RMSE 6–20 cm** |
+| 🌈 **VGGT 深度耦合** | 稠密重建按 Sim(3) 融进世界系（相机对齐 **6–20 cm**）；相对位姿因子进位姿图，**里程计中断时 ATE 11.18→0.51 m** |
 | 🤖 **ROS2 在线化** | 自研里程计/建图/检测封装成 ROS2 节点，回放驱动、TF/PointCloud2/MarkerArray、RViz2 + `ros2 bag` |
 | 🛰️ **跨传感器泛化** | KITTI 建的栈**零改动**直接跑 nuScenes（Velodyne HDL-32E，32 线／别家车队），10 场景 ATE 均值 **0.34 m** |
 | ✅ **工程化** | 19 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
@@ -112,7 +112,27 @@ pybind11 暴露成 `kitti_slam.icp_cpp`。与 Open3D 同款线性化，位姿对
 seq00 上每个窗口的相机对齐误差只有 **6–20 cm**，叠上 SLAM 轨迹一眼就能看出对得齐（金字塔第 ⑤ 层就是它）。
 
 > 全程只用**公开的 VGGT 模型 + 官方权重**，绝不碰任何非公开的融合研究代码——拼接逻辑都是自己写的。
-> 也把话说清楚：这是靠相机位姿把稠密点锚进地图，不是联合 BA，属于"可视化级"的深耦合。
+> 上面那张图是"可视化级"：靠相机位姿把稠密点锚进地图，VGGT 还没进估计。下面这步才让它真正进后端 ↓
+
+### 更进一步：让 VGGT 真正改写轨迹（`scripts/run_vggt_couple.py`）
+
+前面 VGGT 只负责"渲染"，不碰轨迹。这一步把它塞进**位姿图后端**：每个滑窗里 VGGT 吐出逐帧相对
+相机运动，用 LiDAR 定出真实尺度、转到 velodyne 系，当成**相对位姿因子**和 LiDAR 里程计边、回环边
+一起做全局优化——VGGT 从此真的会改动最终位姿。
+
+诚实地说结论分两半（seq00 前 300 帧）：
+
+| 场景 | LiDAR-only | LiDAR + VGGT |
+| --- | --- | --- |
+| **干净数据** | ATE 0.26 m | ATE 0.30 m（≈ 打平） |
+| **里程计中断一段** | ATE **11.18 m**（断裂错位） | ATE **0.51 m**（接回来了） |
+
+![couple](reports/vggt_couple_seq00.png)
+
+干净数据上纯 LiDAR 已经很强，加 VGGT 基本打平——这跟我之前试 IMU 紧耦合的结论一样，不藏着。
+真正见价值的是**里程计中断**：我模拟一段 LiDAR 里程计丢失（该段没有里程计边、位姿冻结），LiDAR-only
+的轨迹从此整段错位、ATE 冲到 11 m；而 VGGT 的视觉相对位姿因子把这段接回正确路径，ATE 拉回 0.5 m。
+这就是耦合的意义——两个传感器互为冗余，激光断了视觉顶上。仍然只调公开 VGGT 权重，耦合逻辑全自己写。
 
 **另一条路：直接拿相机给激光点上色**（`scripts/run_color_map.py`）——按 `P2·Tr` 标定把 KITTI 彩色
 相机投到每帧激光点上、取像素颜色，再用 SLAM 位姿拼成一张 134 万点、覆盖全程 3.7 km 的真彩地图。
@@ -193,6 +213,7 @@ $PY scripts/run_demo_anim.py   --detector dl --frames 800         # 上面那张
 # —— 相机-LiDAR 融合 ——
 $PY scripts/run_color_map.py   --seq 0 --stride 3                 # 相机 RGB 硬标定投影 → 真彩 LiDAR 图
 $PY scripts/run_vggt_fuse.py   --seq 0 --end 4541                 # VGGT 稠密重建融进 SLAM 世界系
+$PY scripts/run_vggt_couple.py --seq 0 --gap 150,190             # VGGT 相对位姿因子进位姿图(里程计中断验证)
 $PY scripts/plot_pyramid.py    --seq 0                            # 五层金字塔（⑤=VGGT×LiDAR）
 
 # —— 自研 C++ ICP ——
@@ -272,8 +293,8 @@ scripts/           各里程碑入口 + run_nuscenes（nuScenes 泛化）+ run_v
 
 - ☑ 从零 PointPillars 3D 检测（AP@0.7 70.06）+ 多目标跟踪 + 动态点剔除建图
 - ☑ 从零 C++/Eigen ICP（pybind11，快 ~8×）
-- ☑ VGGT 前馈视觉大模型深度耦合（位姿锚定 Sim(3) 稠密融合，只调公开冻结权重）
+- ☑ VGGT 前馈视觉大模型深度耦合（位姿锚定 Sim(3) 稠密融合 + VGGT 相对位姿因子进位姿图后端，里程计中断时 ATE 11.18→0.51 m；只调公开冻结权重）
 - ☑ ROS2 在线化（自研栈封装成实时节点图，回放驱动 + RViz2 + ros2 bag）
 - ☑ 跨传感器泛化：KITTI 建的栈零改动跑 nuScenes（Velodyne HDL-32E），10 场景 ATE 均值 0.34 m
-- ☐ 把 VGGT 稠密融合升级为联合 BA / 深度约束进 ICP（当前为可视化级耦合）
+- ☐ 把 VGGT 稠密融合升级为**联合 BA / 深度约束进 ICP**（现已做到位姿图因子级耦合，下一步做点级联合优化）
 - ☐ 更大 / 多楼层场景（Newer College / Hilti，需子图 + 位姿图架构）
