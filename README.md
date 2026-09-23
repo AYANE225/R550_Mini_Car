@@ -36,14 +36,15 @@
 <details>
 <summary>🔀 <b>交互版：一键分离五层</b>（真按钮切换 · 拖拽旋转 · 点图例显隐单层）</summary>
 
+> **▶ 在线打开：<https://ayane225.github.io/VGGT-Lidar-SLAM/pyramid_seq00.html>**（GitHub Pages）
+>
 > GitHub README 是被 sanitize 的 Markdown，跑不了 JS/onclick，内联做不出真按钮；
 > 于是把五层做成 [Plotly 3D 交互页 `docs/pyramid_seq00.html`](docs/pyramid_seq00.html)：
 > 左上「🔀 分离五层 / 📚 合并重叠」两个真按钮把五层整体拉开或叠回同一平面，
 > 右侧图例点一下单独显隐某层、双击只留一层，拖拽旋转俯仰、滚轮缩放。
 >
-> **打开方式**（HTML 在 github.com 上只显示源码，需下面任一途径渲染）：
+> 备用打开方式（.html 在 github.com 上只显示源码）：
 > - htmlpreview（零配置）：<https://htmlpreview.github.io/?https://github.com/AYANE225/VGGT-Lidar-SLAM/blob/main/docs/pyramid_seq00.html>
-> - 或开 GitHub Pages（Settings → Pages → main /root）后直达 `…/docs/pyramid_seq00.html`
 > - 或本地 `git clone` 后直接浏览器打开该文件
 
 </details>
