@@ -46,6 +46,7 @@
 | 先验图定位：误差有界 vs 里程计漂移 ![loc](reports/localize_seq00.png) | 建图上全局路径规划 ![nav](reports/nav_seq00.png) |
 | PointPillars 预测（绿）vs 真值（红）![pp](reports/det3d_pred_000025.png) | 动态感知建图（剔除移动车）![clean](reports/clean_map_seq00.png) |
 | VGGT 稠密重建深度耦合进 SLAM 世界系（叠轨迹验证配准）![vggt](reports/vggt_fused_seq00.png) | 相机 RGB 硬标定投影上色的真彩 LiDAR 地图 ![color](reports/color_map_seq00.png) |
+| **VGGT 因子进后端：LiDAR 里程计中断→视觉接回轨迹（ATE 11.18→0.51 m）** ![dropout](reports/vggt_dropout_seq00.png) | 干净 vs 中断双场景对比（干净打平、中断见价值）![couple](reports/vggt_couple_seq00.png) |
 
 **ROS2 在线化：把整套栈跑成实时节点图**（数据集回放驱动，无需实车）
 ![ros2](reports/ros2_graph.png)
@@ -127,7 +128,7 @@ seq00 上每个窗口的相机对齐误差只有 **6–20 cm**，叠上 SLAM 轨
 | **干净数据** | ATE 0.26 m | ATE 0.30 m（≈ 打平） |
 | **里程计中断一段** | ATE **11.18 m**（断裂错位） | ATE **0.51 m**（接回来了） |
 
-![couple](reports/vggt_couple_seq00.png)
+![dropout](reports/vggt_dropout_seq00.png)
 
 干净数据上纯 LiDAR 已经很强，加 VGGT 基本打平——这跟我之前试 IMU 紧耦合的结论一样，不藏着。
 真正见价值的是**里程计中断**：我模拟一段 LiDAR 里程计丢失（该段没有里程计边、位姿冻结），LiDAR-only
