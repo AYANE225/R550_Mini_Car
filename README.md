@@ -135,6 +135,23 @@ seq00 上每个窗口的相机对齐误差只有 **6–20 cm**，叠上 SLAM 轨
 的轨迹从此整段错位、ATE 冲到 11 m；而 VGGT 的视觉相对位姿因子把这段接回正确路径，ATE 拉回 0.5 m。
 这就是耦合的意义——两个传感器互为冗余，激光断了视觉顶上。仍然只调公开 VGGT 权重，耦合逻辑全自己写。
 
+### 再进一步：把 VGGT 深度补进 ICP（`scripts/run_vggt_icp.py`）
+
+上面是位姿图**因子级**耦合，这一步下到**点级**：把 VGGT 每帧的稠密点（按窗口尺度转到 velodyne 系）
+直接补进激光扫描，再做逐帧 point-to-plane ICP。同样先说诚实结论——**LiDAR 越稀，VGGT 越救命**：
+
+| 每帧激光点数 | 旋转误差 sparse → +VGGT | 平移误差 sparse → +VGGT |
+| --- | --- | --- |
+| 3680（3%） | 0.166° → 0.152° | 0.024 → 0.030 m（打平/略负） |
+| 613（0.5%） | 0.660° → 0.343° | 0.097 → 0.066 m |
+| **245（0.2%）** | **2.46° → 0.47°**（−81%） | **0.41 → 0.09 m**（−78%） |
+
+![icp](reports/vggt_icp_seq00.png)
+
+满 64 线（~12 万点）时 ICP 已经 0.077°/0.017 m，VGGT 点（median 0.46 m 噪）添不上忙、甚至略拖后腿；
+可一旦把激光抽到只剩几百点（模拟极稀/廉价雷达），纯激光配准直接崩到 2.5°/0.4 m，而补进 VGGT 稠密点
+稳稳拉回 0.47°/0.09 m。**跟里程计中断那个实验一个道理：主传感器一退化，视觉几何立刻兜底。**
+
 **另一条路：直接拿相机给激光点上色**（`scripts/run_color_map.py`）——按 `P2·Tr` 标定把 KITTI 彩色
 相机投到每帧激光点上、取像素颜色，再用 SLAM 位姿拼成一张 134 万点、覆盖全程 3.7 km 的真彩地图。
 和 VGGT 各有所长：VGGT 会"脑补"出图像没拍到的地方，相机投影则是分毫不差的真实颜色（但只在相机视野内）。
@@ -215,6 +232,7 @@ $PY scripts/run_demo_anim.py   --detector dl --frames 800         # 上面那张
 $PY scripts/run_color_map.py   --seq 0 --stride 3                 # 相机 RGB 硬标定投影 → 真彩 LiDAR 图
 $PY scripts/run_vggt_fuse.py   --seq 0 --end 4541                 # VGGT 稠密重建融进 SLAM 世界系
 $PY scripts/run_vggt_couple.py --seq 0 --gap 150,190             # VGGT 相对位姿因子进位姿图(里程计中断验证)
+$PY scripts/run_vggt_icp.py    --seq 0 --fracs 0.03,0.005,0.002  # VGGT 稠密点补进 ICP(激光抽稀鲁棒性)
 $PY scripts/plot_pyramid.py    --seq 0                            # 五层金字塔（⑤=VGGT×LiDAR）
 
 # —— 自研 C++ ICP ——
@@ -297,5 +315,6 @@ scripts/           各里程碑入口 + run_nuscenes（nuScenes 泛化）+ run_v
 - ☑ VGGT 前馈视觉大模型深度耦合（位姿锚定 Sim(3) 稠密融合 + VGGT 相对位姿因子进位姿图后端，里程计中断时 ATE 11.18→0.51 m；只调公开冻结权重）
 - ☑ ROS2 在线化（自研栈封装成实时节点图，回放驱动 + RViz2 + ros2 bag）
 - ☑ 跨传感器泛化：KITTI 建的栈零改动跑 nuScenes（Velodyne HDL-32E），10 场景 ATE 均值 0.34 m
-- ☐ 把 VGGT 稠密融合升级为**联合 BA / 深度约束进 ICP**（现已做到位姿图因子级耦合，下一步做点级联合优化）
+- ☑ VGGT 因子级 + 点级深耦合：相对位姿因子进位姿图（里程计中断 ATE 11.18→0.51 m）、稠密点补进 ICP（激光抽到 245 点时旋转 2.46°→0.47°）
+- ☐ 再往上做**点级联合 BA / 光度残差**（当前是点补进 ICP，尚非联合优化）
 - ☐ 更大 / 多楼层场景（Newer College / Hilti，需子图 + 位姿图架构）
