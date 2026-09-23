@@ -6,6 +6,10 @@ reports/*.npy
 reports/*.pkl
 reports/*.log
 reports/*.pth
+reports/*.onnx
+reports/*.engine
+reports/*.trt
+reports/*.plan
 # 编译产物 / 大体积第三方(header-only,用 native/fetch_deps.sh 或 apt 获取)
 *.so
 third_party/Eigen/

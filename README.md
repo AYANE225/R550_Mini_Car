@@ -13,12 +13,13 @@
 | 🔄 **外观级回环抗漂移** | 自写 Scan Context：漂移下召回持平 **0.51**（位置法从 0.96 塌到 **0**），ATE **5.08 → 1.77 m** |
 | 📍 **定位误差有界 5 cm** | 先验图 scan-to-map ICP，同段里程计已漂 7.7 m |
 | 🚗 **从零手写 PointPillars** | 不碰 spconv/OpenPCDet，KITTI val Car BEV **AP@0.7 = 70.06** |
+| ⚙️ **模型落地部署** | 折叠 BN 导出 ONNX（**无损 2e-5**）+ 多后端时延对比：FP16 **1.74×**、Blackwell ORT-CUDA 跑通 |
 | ⚡ **从零 C++/Eigen ICP** | pybind11 + OpenMP，比 NumPy 快 **~8×**，与 Open3D 差 **0.1 mm** |
 | 🔁 **感知反哺 SLAM** | 多目标跟踪判动/静 → 剔除动态点 → 干净静态地图 |
 | 🌈 **VGGT 深度耦合** | 因子级→点级→联合 BA；里程计中断 ATE **11.18→0.51 m**、LiDAR 盲区误差平封 **0.11 m** |
 | 🤖 **ROS2 在线化** | 自研栈封装成实时节点图，回放驱动 + RViz2 + `ros2 bag` |
 | 🛰️ **跨传感器泛化** | KITTI 栈**零改动**跑 nuScenes（HDL-32E，32 线），10 场景 ATE 均值 **0.34 m** |
-| ✅ **工程化** | 22 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
+| ✅ **工程化** | 24 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
 
@@ -40,6 +41,9 @@
 | 相机 RGB 真彩 LiDAR 地图 ![color](reports/color_map_seq00.png) | VGGT 因子接回中断轨迹 ![dropout](reports/vggt_dropout_seq00.png) |
 | 点级联合 BA（盲区平封 0.11 m）![ba](reports/vggt_ba_seq00.png) | VGGT 点补进 ICP（越稀越救命）![icp](reports/vggt_icp_seq00.png) |
 | ROS2 实时节点图 ![ros2](reports/ros2_graph.png) | nuScenes 零改动泛化 ![nuscenes](reports/nuscenes_scene0.png) |
+
+**部署时延**：折叠 BN 导出 ONNX，单帧 NN 推理多后端对比（RTX 5090 / Blackwell sm_120）。
+![deploy](reports/det3d_deploy_bench.png)
 
 ---
 
@@ -77,6 +81,19 @@
 
 不碰 spconv/OpenPCDet：点云切 pillar → 骨干 → 锚框头 → focal 损失 → 旋转框 IoU 分配 / NMS 全手写（4.81 M 参数）。走纯 2D 卷积也躲开在 5090 编译 spconv 的地狱。
 > **KITTI val Car BEV AP（R40）：AP@0.5 = 80.46，AP@0.7 = 70.06。**
+
+### ⚙️ PointPillars 落地部署（`det3d/deploy.py`）
+
+把训好的检测器搬上推理引擎：**折叠 BN**（Conv/Linear+BN 解析并进权重）后导出端到端 ONNX（动态柱数 P），喂 ONNXRuntime。导出**数值无损**（torch vs ORT 最大绝对差 **2e-5**）——故 AP 不掉，400 val 帧经 ORT-CUDA 重算 AP@0.7 **71.76**（与原栈同档，差异来自帧子集非导出）。
+
+| 后端（RTX 5090 / Blackwell sm_120） | 单帧 NN | FPS | 加速 |
+| --- | --- | --- | --- |
+| PyTorch FP32 (CUDA) | 2.42 ms | 413 | 1.00× |
+| **PyTorch FP16 (CUDA)** | **1.39 ms** | **719** | **1.74×** |
+| ONNXRuntime (CUDA) | 3.58 ms | 279 | 0.68× |
+| ONNXRuntime (CPU) | 91 ms | 11 | 可移植 |
+
+> sm_120 上先折叠 BN 才让 ORT-CUDA 跑通（绕开 cuDNN BatchNorm 内核限制）；TensorRT EP 已接入（`trt_fp16_enable`），本机缺 `libnvinfer` 自动跳过、如实标注不藏。
 
 ### ⚡ C++/Eigen 点面 ICP（`native/`，pybind11 + OpenMP）
 
@@ -163,6 +180,7 @@ $PY scripts/run_nuscenes.py     --all              # 跨传感器泛化
 # 深度学习感知
 $PY scripts/det3d_train.py   --epochs 20 --bs 6 --resume
 $PY scripts/det3d_eval.py    --max-frames 1000 --score 0.1
+$PY scripts/det3d_deploy.py  --do all                # 导出ONNX+数值对齐+多后端时延+保AP
 $PY scripts/run_demo_anim.py --detector dl --frames 800
 
 # 相机-LiDAR / VGGT 融合
@@ -184,7 +202,7 @@ $PY scripts/bench_icp.py --seq 0 --frame 0
 ```
 kitti_slam/   odometry / loop / scan_context / posegraph / registration / mapping /
               localize / planning / tracking / metrics / kitti_io / nuscenes_io
-det3d/        从零 PointPillars（体素化 / 骨干 / 锚框 / 损失 / 推理）
+det3d/        从零 PointPillars（体素化 / 骨干 / 锚框 / 损失 / 推理 / ONNX 部署）
 native/       C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cpp）
 ros2_ws/      ROS2 封装：cloud_player / nuscenes_player / odometry / mapping / detection
 scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
@@ -195,7 +213,7 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 <summary>⚙️ 性能 · 测试 · 设计要点</summary>
 
 - **性能**（单核 CPU + Open3D）：里程计 ~30 ms/帧 · 检测 ~21 ms/帧 · 定位 ~65 ms/帧；全序列里程计缓存 ~140 s、建图 ~112 s。
-- **测试**：`pytest tests/` 22 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
+- **测试**：`pytest tests/` 24 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
 - **坐标系**：里程计 velodyne 系（z 上）、KITTI 真值相机系（y 上），俯视图画 (x,z)；ATE 用 SE(3) 对齐。
 - **定位用 ICP 非 MCL**：似然域 MCL 大场景朝向弱约束、发散百米；scan-to-map ICP 立到亚分米。
 - **回环收伪**：ICP fitness ≥ 0.85 且 rmse ≤ 0.85 才接受，拒掉起点误匹配等伪回环。
@@ -207,6 +225,7 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 
 - ☑ 全栈 SLAM：里程计 → 回环（位置法 + 外观级 Scan Context）→ 位姿图 → 建图 → 定位 → 导航
 - ☑ 从零 PointPillars（AP@0.7 70.06）+ 多目标跟踪 + 动态点剔除建图
+- ☑ 模型落地部署：折叠 BN 导出 ONNX（无损 2e-5）+ 多后端时延对比（FP16 1.74×、Blackwell ORT-CUDA / CPU）
 - ☑ 从零 C++/Eigen ICP（pybind11，快 ~8×）
 - ☑ VGGT 深度耦合三步：可视化级 Sim(3) → 相对位姿因子进位姿图 → 点级联合 BA（只调公开冻结权重）
 - ☑ ROS2 在线化 + 跨传感器泛化（nuScenes HDL-32E，10 场景 ATE 均值 0.34 m）
