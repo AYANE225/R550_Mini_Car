@@ -73,19 +73,20 @@ def main(argv=None):
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
+        from kitti_slam import plotstyle as ps
         fig, ax = plt.subplots(1, 2, figsize=(14, 7))
+        fig.patch.set_facecolor(ps.BG)
         # KITTI 相机世界系：水平面是 x–z（y 为竖直方向），俯视图取 (x, z)。
         for k, (mm, title) in enumerate(((m0, f'odometry  ATE={m0["ate_rmse_m"]:.2f}m'),
                                          (m1, f'+loop closure  ATE={m1["ate_rmse_m"]:.2f}m'))):
             g, a = mm['gt_xyz'], mm['aligned']
-            ax[k].plot(g[:, 0], g[:, 2], '-', color='k', lw=2, label='ground truth')
-            ax[k].plot(a[:, 0], a[:, 2], '--', color='tab:red', lw=1.3, label='estimate')
-            ax[k].plot(g[0, 0], g[0, 2], 'go', ms=9)
-            ax[k].set_aspect('equal'); ax[k].grid(alpha=0.3); ax[k].legend()
+            ax[k].plot(g[:, 0], g[:, 2], '-', color=ps.GT, lw=2, label='ground truth')
+            ax[k].plot(a[:, 0], a[:, 2], '--', color=ps.EST, lw=1.3, label='estimate')
+            ax[k].plot(g[0, 0], g[0, 2], 'o', color=ps.START, ms=9)
+            ax[k].set_aspect('equal'); ps.style_ax(ax[k]); ps.style_legend(ax[k].legend())
             ax[k].set_title(title); ax[k].set_xlabel('x [m]'); ax[k].set_ylabel('z [m]')
-        fig.suptitle(f'KITTI seq{args.seq:02d} [{n} frames, {len(loops)} loops]')
-        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        fig.tight_layout(); fig.savefig(args.out, dpi=120)
+        fig.suptitle(f'KITTI seq{args.seq:02d} [{n} frames, {len(loops)} loops]', color=ps.FG)
+        fig.tight_layout(); ps.savefig(fig, args.out, dpi=120)
         print('  saved', args.out)
     return 0
 

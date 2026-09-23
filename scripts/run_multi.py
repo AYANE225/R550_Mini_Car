@@ -74,20 +74,22 @@ def main(argv=None):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    from kitti_slam import plotstyle as ps
     ncol = 3; nrow = int(np.ceil(len(rows) / ncol))
     fig, axes = plt.subplots(nrow, ncol, figsize=(5 * ncol, 5 * nrow))
+    fig.patch.set_facecolor(ps.BG)
     for ax, r in zip(np.atleast_1d(axes).ravel(), rows):
         g, a = r['m1']['gt_xyz'], r['m1']['aligned']
-        ax.plot(g[:, 0], g[:, 2], '-', color='k', lw=2, label='GT')
-        ax.plot(a[:, 0], a[:, 2], '--', color='tab:red', lw=1.2, label='SLAM')
-        ax.plot(g[0, 0], g[0, 2], 'go', ms=8)
-        ax.set_aspect('equal'); ax.grid(alpha=0.3)
+        ax.plot(g[:, 0], g[:, 2], '-', color=ps.GT, lw=2, label='GT')
+        ax.plot(a[:, 0], a[:, 2], '--', color=ps.EST, lw=1.2, label='SLAM')
+        ax.plot(g[0, 0], g[0, 2], 'o', color=ps.START, ms=8)
+        ax.set_aspect('equal'); ps.style_ax(ax)
         ax.set_title(f"seq{r['seq']:02d}: ATE {r['ate1']:.2f}m ({r['loops']} loops)")
     for ax in np.atleast_1d(axes).ravel()[len(rows):]:
         ax.axis('off')
-    axes.ravel()[0].legend()
-    fig.suptitle('KITTI multi-sequence LiDAR SLAM (optimized trajectory vs ground truth)')
-    fig.tight_layout(); fig.savefig(ROOT / 'reports' / 'multi_seq.png', dpi=110)
+    ps.style_legend(axes.ravel()[0].legend())
+    fig.suptitle('KITTI multi-sequence LiDAR SLAM (optimized trajectory vs ground truth)', color=ps.FG)
+    fig.tight_layout(); ps.savefig(fig, ROOT / 'reports' / 'multi_seq.png', dpi=110)
     print('  wrote reports/multi_seq.png')
     return 0
 

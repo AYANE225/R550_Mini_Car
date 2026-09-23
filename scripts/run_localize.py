@@ -32,20 +32,28 @@ def main(argv=None):
     loc = MapLocalizer(mp['map_pts'].astype(np.float64), crop_radius=args.crop)
 
     idx = list(range(0, n, args.stride))
-    est = np.repeat(np.eye(4)[None], len(idx), axis=0)
-    est[0] = opt[0]                                   # 已知初始位姿（先验地图定位常规设定）
-    fits = []
-    t0 = time.perf_counter()
-    for k in range(1, len(idx)):
-        i, ip = idx[k], idx[k - 1]
-        motion = np.linalg.inv(odom[ip]) @ odom[i]    # 里程计增量作初值
-        init = est[k - 1] @ motion
-        T, fit, rmse = loc.localize(io.read_velodyne(args.seq, i), init)
-        est[k] = T
-        fits.append(fit)
-        if k % max(1, len(idx) // 10) == 0:
-            print(f'  localize {i}/{n} fit={fit:.2f}', flush=True)
-    wall = time.perf_counter() - t0
+    cache = ROOT / 'reports' / f'loc_est_seq{args.seq:02d}_{args.stride}_{args.crop}.npz'
+    if cache.exists():
+        c = np.load(cache)
+        est, fits = c['est'], list(c['fits'])
+        wall = float(c['wall'])
+        print(f'  loaded cached localization ({len(est)}) from {cache.name}')
+    else:
+        est = np.repeat(np.eye(4)[None], len(idx), axis=0)
+        est[0] = opt[0]                                   # 已知初始位姿（先验地图定位常规设定）
+        fits = []
+        t0 = time.perf_counter()
+        for k in range(1, len(idx)):
+            i, ip = idx[k], idx[k - 1]
+            motion = np.linalg.inv(odom[ip]) @ odom[i]    # 里程计增量作初值
+            init = est[k - 1] @ motion
+            T, fit, rmse = loc.localize(io.read_velodyne(args.seq, i), init)
+            est[k] = T
+            fits.append(fit)
+            if k % max(1, len(idx) // 10) == 0:
+                print(f'  localize {i}/{n} fit={fit:.2f}', flush=True)
+        wall = time.perf_counter() - t0
+        np.savez(cache, est=est, fits=np.array(fits), wall=wall)
 
     est_xy = est[:, :2, 3]
     opt_xy = opt[idx, :2, 3]
@@ -61,23 +69,25 @@ def main(argv=None):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    from kitti_slam import plotstyle as ps
     occ = mp['occ']; res = float(mp['res']); x0 = float(mp['x0']); y0 = float(mp['y0'])
     ext = [x0, x0 + occ.shape[1] * res, y0, y0 + occ.shape[0] * res]
     fig, ax = plt.subplots(1, 2, figsize=(16, 8))
-    ax[0].imshow(occ, origin='lower', extent=ext, cmap='Greys', alpha=0.7)
-    ax[0].plot(opt[:, 0, 3], opt[:, 1, 3], '-', color='k', lw=2, label='SLAM reference')
-    ax[0].plot(est_xy[:, 0], est_xy[:, 1], '--', color='tab:red', lw=1.2, label='ICP localization')
-    ax[0].plot(est_xy[0, 0], est_xy[0, 1], 'go', ms=9)
-    ax[0].set_aspect('equal'); ax[0].legend(); ax[0].grid(alpha=0.2)
+    fig.patch.set_facecolor(ps.BG)
+    ax[0].imshow(occ, origin='lower', extent=ext, cmap=ps.OCC, alpha=0.9)
+    ax[0].plot(opt[:, 0, 3], opt[:, 1, 3], '-', color=ps.GT, lw=2, label='SLAM reference')
+    ax[0].plot(est_xy[:, 0], est_xy[:, 1], '--', color=ps.EST, lw=1.2, label='ICP localization')
+    ax[0].plot(est_xy[0, 0], est_xy[0, 1], 'o', color=ps.START, ms=9)
+    ax[0].set_aspect('equal'); ps.style_legend(ax[0].legend()); ps.style_ax(ax[0])
     ax[0].set_xlabel('x [m]'); ax[0].set_ylabel('y [m]'); ax[0].set_title('scan-to-map localization')
     ai = np.array(idx)
-    ax[1].plot(ai, e_loc, color='tab:red', label='scan-to-map ICP')
-    ax[1].plot(ai, e_odom, color='tab:gray', lw=1, label='raw odometry (drifts)')
+    ax[1].plot(ai, e_loc, color=ps.EST, label='scan-to-map ICP')
+    ax[1].plot(ai, e_odom, color=ps.MUTED, lw=1, label='raw odometry (drifts)')
     ax[1].set_xlabel('frame'); ax[1].set_ylabel('error vs SLAM-opt [m]')
-    ax[1].grid(alpha=0.3); ax[1].legend()
+    ps.style_ax(ax[1]); ps.style_legend(ax[1].legend())
     ax[1].set_title(f'localization RMSE {np.sqrt((e_loc**2).mean()):.2f} m (bounded)')
-    fig.suptitle(f'KITTI seq{args.seq:02d}: prior-map localization (lidar + odom init, no GT)')
-    fig.tight_layout(); fig.savefig(ROOT / 'reports' / f'localize_seq{args.seq:02d}.png', dpi=120)
+    fig.suptitle(f'KITTI seq{args.seq:02d}: prior-map localization (lidar + odom init, no GT)', color=ps.FG)
+    fig.tight_layout(); ps.savefig(fig, ROOT / 'reports' / f'localize_seq{args.seq:02d}.png', dpi=120)
     print('  saved', f'reports/localize_seq{args.seq:02d}.png')
     return 0
 

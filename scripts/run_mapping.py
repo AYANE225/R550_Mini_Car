@@ -44,28 +44,37 @@ def main(argv=None):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    from kitti_slam import plotstyle as ps
     traj = opt[:, :3, 3]
     # BEV：2D 占据 + 轨迹（SLAM 世界系 z 朝上，水平面就是 x–y）
     fig, ax = plt.subplots(figsize=(10, 9))
+    fig.patch.set_facecolor(ps.BG)
     ext = [grid.x0, grid.x0 + grid.occ.shape[1] * grid.res,
            grid.y0, grid.y0 + grid.occ.shape[0] * grid.res]
-    ax.imshow(grid.occ, origin='lower', extent=ext, cmap='Greys', alpha=0.85)
-    ax.plot(traj[:, 0], traj[:, 1], '-', color='tab:blue', lw=1.5, label='SLAM trajectory')
-    ax.plot(traj[0, 0], traj[0, 1], 'go', ms=10, label='start')
-    ax.set_aspect('equal'); ax.legend(); ax.grid(alpha=0.2)
+    ax.imshow(grid.occ, origin='lower', extent=ext, cmap=ps.OCC, alpha=0.9)
+    ax.plot(traj[:, 0], traj[:, 1], '-', color=ps.EST, lw=1.5, label='SLAM trajectory')
+    ax.plot(traj[0, 0], traj[0, 1], 'o', color=ps.START, ms=10, label='start')
+    ax.set_aspect('equal'); ps.style_legend(ax.legend()); ps.style_ax(ax)
     ax.set_xlabel('x [m]'); ax.set_ylabel('y [m]')
     ax.set_title(f'KITTI seq{args.seq:02d}: built 2D occupancy map + trajectory')
-    fig.tight_layout(); fig.savefig(ROOT / 'reports' / f'map_seq{args.seq:02d}_bev.png', dpi=120)
+    fig.tight_layout(); ps.savefig(fig, ROOT / 'reports' / f'map_seq{args.seq:02d}_bev.png', dpi=120)
     print('  saved BEV')
 
     # 3D 点云地图（按高度着色，抽稀）
     sub = map_pts[::5]
     fig3 = plt.figure(figsize=(11, 7))
+    fig3.patch.set_facecolor(ps.BG)
     ax3 = fig3.add_subplot(111, projection='3d')
-    ax3.scatter(sub[:, 0], sub[:, 1], sub[:, 2], c=sub[:, 2], s=0.4, cmap='viridis')
+    ax3.set_facecolor(ps.BG)
+    ax3.scatter(sub[:, 0], sub[:, 1], sub[:, 2], c=sub[:, 2], s=0.4, cmap='turbo')
+    for axis in (ax3.xaxis, ax3.yaxis, ax3.zaxis):
+        axis.set_pane_color((0.04, 0.04, 0.07, 1.0))
+        axis.label.set_color(ps.MUTED)
+        axis._axinfo['grid']['color'] = ps.GRID
+    ax3.tick_params(colors=ps.MUTED)
     ax3.set_xlabel('x [m]'); ax3.set_ylabel('y [m]'); ax3.set_zlabel('z [m]')
-    ax3.set_title(f'KITTI seq{args.seq:02d}: 3D LiDAR map (N={len(map_pts)})')
-    fig3.tight_layout(); fig3.savefig(ROOT / 'reports' / f'map_seq{args.seq:02d}_3d.png', dpi=120)
+    ax3.set_title(f'KITTI seq{args.seq:02d}: 3D LiDAR map (N={len(map_pts)})', color=ps.FG)
+    fig3.tight_layout(); ps.savefig(fig3, ROOT / 'reports' / f'map_seq{args.seq:02d}_3d.png', dpi=120)
     print('  saved 3D')
     return 0
 

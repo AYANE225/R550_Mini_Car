@@ -44,17 +44,19 @@ def main(argv=None):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    from kitti_slam import plotstyle as ps
     ext = [x0, x0 + occ.shape[1] * res, y0, y0 + occ.shape[0] * res]
     fig, ax = plt.subplots(figsize=(11, 10))
-    ax.imshow(occ, origin='lower', extent=ext, cmap='Greys', alpha=0.55)
-    ax.plot(traj[:, 0], traj[:, 1], '-', color='tab:blue', lw=1, alpha=0.5, label='driven trajectory')
-    ax.plot(path[:, 0], path[:, 1], '-', color='tab:red', lw=2.5, label=f'planned route {length:.0f}m')
-    ax.plot(*start, 'go', ms=13, label='start')
-    ax.plot(*goal, 'r*', ms=18, label='goal')
-    ax.set_aspect('equal'); ax.legend(loc='upper left'); ax.grid(alpha=0.2)
+    fig.patch.set_facecolor(ps.BG)
+    ax.imshow(occ, origin='lower', extent=ext, cmap=ps.OCC, alpha=0.85)
+    ax.plot(traj[:, 0], traj[:, 1], '-', color=ps.GT, lw=1, alpha=0.55, label='driven trajectory')
+    ax.plot(path[:, 0], path[:, 1], '-', color=ps.EST, lw=2.5, label=f'planned route {length:.0f}m')
+    ax.plot(*start, 'o', color=ps.START, ms=13, label='start')
+    ax.plot(*goal, '*', color=ps.EST, ms=20, mec='w', mew=0.6, label='goal')
+    ax.set_aspect('equal'); ps.style_legend(ax.legend(loc='upper left')); ps.style_ax(ax)
     ax.set_xlabel('x [m]'); ax.set_ylabel('y [m]')
     ax.set_title(f'KITTI seq{args.seq:02d}: global path planning on SLAM-built map')
-    fig.tight_layout(); fig.savefig(ROOT / 'reports' / f'nav_seq{args.seq:02d}.png', dpi=120)
+    fig.tight_layout(); ps.savefig(fig, ROOT / 'reports' / f'nav_seq{args.seq:02d}.png', dpi=120)
     print('  saved', f'reports/nav_seq{args.seq:02d}.png')
     return 0
 
