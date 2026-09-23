@@ -23,6 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'cloud_player = kitti_slam_ros.cloud_player:main',
+            'nuscenes_player = kitti_slam_ros.nuscenes_player:main',
             'odometry_node = kitti_slam_ros.odometry_node:main',
             'mapping_node = kitti_slam_ros.mapping_node:main',
             'detection_node = kitti_slam_ros.detection_node:main',

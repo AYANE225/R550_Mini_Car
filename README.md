@@ -23,6 +23,7 @@
 | 🔁 **感知反哺 SLAM** | 多目标跟踪判动/静 → 剔除动态点 → 干净静态地图 |
 | 🌈 **VGGT 深度耦合** | 前馈视觉大模型稠密重建按位姿 Sim(3) 融进 SLAM 世界系，相机对齐 **RMSE 6–20 cm** |
 | 🤖 **ROS2 在线化** | 自研里程计/建图/检测封装成 ROS2 节点，回放驱动、TF/PointCloud2/MarkerArray、RViz2 + `ros2 bag` |
+| 🛰️ **跨传感器泛化** | KITTI 建的栈**零改动**直接跑 nuScenes（Velodyne HDL-32E，32 线／别家车队），10 场景 ATE 均值 **0.34 m** |
 | ✅ **工程化** | 19 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
@@ -48,6 +49,10 @@
 
 **ROS2 在线化：把整套栈跑成实时节点图**（数据集回放驱动，无需实车）
 ![ros2](reports/ros2_graph.png)
+
+**跨传感器泛化：KITTI 上建的栈零改动直接跑 nuScenes（Velodyne HDL-32E，32 线）**
+左：我们的 LiDAR 里程计（橙）vs nuScenes 地图定位真值（青），ATE 0.07 m；右：里程计拼出的路口点云。
+![nuscenes](reports/nuscenes_scene0.png)
 
 ---
 
@@ -144,6 +149,32 @@ ros2 launch kitti_slam_ros slam_demo.launch.py seq:=0 rate:=10.0     # 一键起
 
 ---
 
+## 🛰️ 跨数据集 / 跨传感器泛化（nuScenes）
+
+一套 SLAM 只在 KITTI 上刷分说明不了什么。把**在 KITTI（Velodyne HDL-64E，64 线）上搭好的整条栈**
+**一行参数不改**，直接喂给 **nuScenes**（Motional 车队，**Velodyne HDL-32E，32 线**，20 Hz，波士顿/新加坡）——
+点数只有 KITTI 的一半、扫描更稀，仍然稳：
+
+| 场景 | 帧数 | 里程 | ATE (m) | 相对平移 |
+| --- | --- | --- | --- | --- |
+| scene-0061 | 382 | 91 m | **0.07** | 0.79% |
+| scene-0655 | 396 | 163 m | 0.28 | 0.61% |
+| scene-1077 | 400 | 252 m | 0.55 | 0.90% |
+| scene-0796 | 392 | 236 m | 1.14 | 1.52% |
+| **10 场景均值** | | | **0.34** | **1.68%**（8 个运动场景） |
+
+> 真值用 nuScenes 自带的地图级定位（`ego_pose`），ATE 经 SE(3) 对齐（坐标系无关）。相对误差略高于
+> KITTI（0.82%），主要因 32 线更稀、城区动态目标更多、真值本身含定位噪声——但**换个厂商配置的激光、
+> 零重调即达亚米级**，正是这套栈没有过拟合 KITTI 的证据。（`scripts/run_nuscenes.py`，不依赖 nuscenes-devkit，直接解析 v1.0 json。）
+
+同一套 **ROS2 在线图也照跑 nuScenes**——只换数据源节点，下游里程计/建图/检测节点原封不动：
+
+```bash
+ros2 launch kitti_slam_ros nuscenes_demo.launch.py scene:=0 rate:=10.0    # nuscenes_player → 同一套节点
+```
+
+---
+
 ## 🚀 快速开始
 
 ```bash
@@ -154,6 +185,7 @@ $PY scripts/run_slam.py     --seq 0 --frames -1   # 里程计 + 回环 + 位姿�
 $PY scripts/run_mapping.py  --seq 0               # 建 3D/2D 地图
 $PY scripts/run_localize.py --seq 0               # scan-to-map 先验图定位
 $PY scripts/run_nav.py      --seq 0               # 全局路径规划
+$PY scripts/run_nuscenes.py --all                 # 跨传感器泛化：整套栈直接跑 nuScenes(HDL-32E)
 
 # —— 深度学习感知 ——
 $PY scripts/det3d_train.py     --epochs 20 --bs 6 --resume        # 训 PointPillars
@@ -217,10 +249,11 @@ kitti_slam/
   registration.py  点云预处理 & point-to-plane ICP  mapping.py    3D 体素图 + 2D 占据栅格
   localize.py      scan-to-map 先验图定位           planning.py   栅格 A* 全局规划
   tracking.py      世界系卡尔曼多目标跟踪（反哺去动态）  metrics.py   ATE + KITTI 官方相对误差
+  kitti_io.py      KITTI Odometry 读取              nuscenes_io.py  nuScenes(HDL-32E) 读取(跨传感器泛化)
 det3d/             从零 PointPillars（体素化 / 骨干 / 锚框 / 损失 / 推理）
 native/            C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cpp）
-ros2_ws/           ROS2 封装：cloud_player / odometry / mapping / detection 节点 + launch + rviz
-scripts/           各里程碑入口 + run_vggt_fuse（VGGT×LiDAR 深度耦合）+ plot_pyramid（五层图）
+ros2_ws/           ROS2 封装：cloud_player / nuscenes_player / odometry / mapping / detection + launch
+scripts/           各里程碑入口 + run_nuscenes（nuScenes 泛化）+ run_vggt_fuse（深度耦合）+ plot_pyramid
 ```
 
 <details>
@@ -243,5 +276,6 @@ scripts/           各里程碑入口 + run_vggt_fuse（VGGT×LiDAR 深度耦合
 - ☑ 从零 C++/Eigen ICP（pybind11，快 ~8×）
 - ☑ VGGT 前馈视觉大模型深度耦合（位姿锚定 Sim(3) 稠密融合，只调公开冻结权重）
 - ☑ ROS2 在线化（自研栈封装成实时节点图，回放驱动 + RViz2 + ros2 bag）
+- ☑ 跨传感器泛化：KITTI 建的栈零改动跑 nuScenes（Velodyne HDL-32E），10 场景 ATE 均值 0.34 m
 - ☐ 把 VGGT 稠密融合升级为联合 BA / 深度约束进 ICP（当前为可视化级耦合）
 - ☐ 更大 / 多楼层场景（Newer College / Hilti，需子图 + 位姿图架构）
