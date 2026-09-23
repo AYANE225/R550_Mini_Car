@@ -19,7 +19,8 @@
 | 🌈 **VGGT 深度耦合** | 因子级→点级→联合 BA；里程计中断 ATE **11.18→0.51 m**、LiDAR 盲区误差稳在 **0.11 m** |
 | 🤖 **ROS2 在线化** | 自研栈封装成实时节点图，回放驱动 + RViz2 + `ros2 bag` |
 | 🛰️ **跨传感器泛化** | KITTI 栈**零改动**跑 nuScenes（HDL-32E，32 线），10 场景 ATE 均值 **0.34 m** |
-| ✅ **工程化** | 24 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
+| 🌆 **KITTI-360 大场景** | 同栈零改动跑 KITTI-360 城区连续 **2.4 km**（3018 帧）：相对平移 **1.32%**、漂移主导 |
+| ✅ **工程化** | 28 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
 
@@ -41,6 +42,9 @@
 | 相机 RGB 真彩 LiDAR 地图 ![color](reports/color_map_seq00.png) | VGGT 因子接回中断轨迹 ![dropout](reports/vggt_dropout_seq00.png) |
 | 点级联合 BA（盲区误差稳在 0.11 m）![ba](reports/vggt_ba_seq00.png) | VGGT 点补进 ICP（越稀增益越大）![icp](reports/vggt_icp_seq00.png) |
 | ROS2 实时节点图 ![ros2](reports/ros2_graph.png) | nuScenes 零改动泛化 ![nuscenes](reports/nuscenes_scene0.png) |
+
+**KITTI-360 大场景挑战**：KITTI 建的栈零改动跑 KITTI-360 城区连续 2.4 km，街区网格清晰、相对平移 1.32%。
+![k360](reports/kitti360_d0000.png)
 
 **部署时延**：折叠 BN 导出 ONNX，单帧 NN 推理多后端对比（RTX 5090 / Blackwell sm_120）。
 ![deploy](reports/det3d_deploy_bench.png)
@@ -150,6 +154,17 @@ KITTI（HDL-64E）建的栈**一行参数不改**直接跑 nuScenes（**HDL-32E�
 | scene-1077 | 252 m | 0.55 m | 0.90% |
 | **10 场景均值** | | **0.34 m** | **1.68%** |
 
+### 🌆 KITTI-360 大场景挑战（`kitti_slam/kitti360_io.py`）
+
+同一套栈**一行参数不改**（还是 HDL-64E、voxel 与回环阈值全同 KITTI）直接跑 KITTI-360 城区 drive_0000 的连续 2.4 km（3018 帧稠密真值段）。这条路线几乎不重访、全程只成 1 个回环，属**漂移主导**（同 KITTI seq02 的情形）：相对平移仍落在 LOAM 带，ATE 因缺回环收束而偏大——如实报出。
+
+| drive_0000（3018 帧 / 2.4 km，1 回环） | ATE | 相对平移 | 相对旋转 |
+| --- | --- | --- | --- |
+| 里程计 | 15.63 m | — | — |
+| **+回环 + 位姿图** | **12.38 m** | **1.32%** | 0.0059 °/m |
+
+真值按 `T_world_velo = cam0_to_world @ inv(calib_cam_to_velo)` 推导；里程计跑连续帧，ATE/RPE 按**绝对帧号**只在有真值的帧上 SE(3) 对齐评测。
+
 ---
 
 ## 📊 KITTI 六序列（官方相对误差）
@@ -176,6 +191,7 @@ $PY scripts/run_mapping.py      --seq 0
 $PY scripts/run_localize.py     --seq 0
 $PY scripts/run_nav.py          --seq 0
 $PY scripts/run_nuscenes.py     --all              # 跨传感器泛化
+$PY scripts/run_kitti360.py     --drive 0          # KITTI-360 大场景挑战
 
 # 深度学习感知
 $PY scripts/det3d_train.py   --epochs 20 --bs 6 --resume
@@ -201,7 +217,7 @@ $PY scripts/bench_icp.py --seq 0 --frame 0
 
 ```
 kitti_slam/   odometry / loop / scan_context / posegraph / registration / mapping /
-              localize / planning / tracking / metrics / kitti_io / nuscenes_io
+              localize / planning / tracking / metrics / kitti_io / nuscenes_io / kitti360_io
 det3d/        从零 PointPillars（体素化 / 骨干 / 锚框 / 损失 / 推理 / ONNX 部署）
 native/       C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cpp）
 ros2_ws/      ROS2 封装：cloud_player / nuscenes_player / odometry / mapping / detection
@@ -213,7 +229,7 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 <summary>⚙️ 性能 · 测试 · 设计要点</summary>
 
 - **性能**（单核 CPU + Open3D）：里程计 ~30 ms/帧 · 检测 ~21 ms/帧 · 定位 ~65 ms/帧；全序列里程计缓存 ~140 s、建图 ~112 s。
-- **测试**：`pytest tests/` 24 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
+- **测试**：`pytest tests/` 28 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
 - **坐标系**：里程计 velodyne 系（z 上）、KITTI 真值相机系（y 上），俯视图画 (x,z)；ATE 用 SE(3) 对齐。
 - **定位用 ICP 非 MCL**：似然域 MCL 大场景朝向弱约束、发散百米；scan-to-map ICP 可达亚分米。
 - **回环收伪**：ICP fitness ≥ 0.85 且 rmse ≤ 0.85 才接受，拒掉起点误匹配等伪回环。
@@ -229,4 +245,5 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 - ☑ 从零 C++/Eigen ICP（pybind11，快 ~8×）
 - ☑ VGGT 深度耦合三步：可视化级 Sim(3) → 相对位姿因子进位姿图 → 点级联合 BA（只调公开冻结权重）
 - ☑ ROS2 在线化 + 跨传感器泛化（nuScenes HDL-32E，10 场景 ATE 均值 0.34 m）
+- ☑ KITTI-360 大场景挑战：同栈零改动跑城区连续 2.4 km（相对平移 1.32%、漂移主导如实报）
 - ☐ 更大 / 多楼层场景（Newer College / Hilti，需子图 + 位姿图架构）
