@@ -12,6 +12,9 @@
 | 🎯 **SLAM 精度接近经典 LOAM** | 六序列平移误差均值 **0.82%**；seq00 回环后 ATE **4.85 → 2.25 m** |
 | 🔄 **外观级回环抗漂移** | 自写 Scan Context：漂移下召回持平 **0.51**（位置法从 0.96 塌到 **0**），ATE **5.08 → 1.77 m** |
 | 📍 **定位误差有界 5 cm** | 先验图 scan-to-map ICP，同段里程计已漂 7.7 m |
+| 🔦 **无初值全局重定位** | 被"绑架"到地图未知处：Scan Context 外观检索→scan-to-map ICP，seq00 冷启动 **98%** 成功、中位 **0.04 m**（无检索盲配 **0%**） |
+| 🧭 **真 IMU 惯性桥接** | KITTI-raw OXTS 真惯导 + 从零预积分：LiDAR 盲区过弯，匀速外推漂 **3.41 m** → 惯导桥接 **1.10 m**（**3.1×**） |
+| 🎨 **从零 LiDAR 语义分割** | 距离图 U-Net（**0.88 M** 参数）：SemanticKITTI val **mIoU 44.6**，逐帧预测累积成 BEV 语义地图 |
 | 🕹️ **闭环导航真开出去** | 全局 A* → 运动学自行车 + DWA 局部规划/控制把车开到终点：seq00 **651 m REACHED**、横向误差 **0.95 m**、反应式绕开 3 处全局图未知障碍 |
 | 🚗 **从零手写 PointPillars** | 不碰 spconv/OpenPCDet，KITTI val Car BEV **AP@0.7 = 70.06** |
 | ⚙️ **模型落地部署** | 折叠 BN 导出 ONNX（**数值对齐 2e-5**）+ 多后端时延对比：FP16 **1.74×**、Blackwell ORT-CUDA 跑通 |
@@ -21,7 +24,7 @@
 | 🤖 **ROS2 在线化** | 自研栈封装成实时节点图，回放驱动 + RViz2 + `ros2 bag` |
 | 🛰️ **跨传感器泛化** | KITTI 栈**零改动**跑 nuScenes（HDL-32E，32 线），10 场景 ATE 均值 **0.34 m** |
 | 🌆 **KITTI-360 大场景** | 同栈零改动跑 KITTI-360 城区连续 **2.4 km**（3018 帧）：相对平移 **1.32%**、漂移主导 |
-| ✅ **工程化** | 37 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
+| ✅ **工程化** | 45 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
 
@@ -40,6 +43,17 @@
 
 **闭环导航（seq00）**：全局 A* 规一条 651 m 路，再用运动学自行车模型 + DWA 局部规划/控制**真把车开到终点**——沿途反应式绕开 3 处全局图未知的临时障碍，诚实报横向误差 / 余隙 / 是否到达（右侧控制曲线随仿真时刻同步扫过）。
 ![localnav](reports/local_nav_seq00.gif)
+
+**🆕 定位 · 感知三连**：无初值全局重定位 · 真 IMU 惯性桥接 · 从零 LiDAR 语义分割（详见下方[亮点拆解](#-亮点拆解)）。
+
+**① 无初值全局重定位（seq00）**：车被"绑架"到先验地图未知处，仅凭一帧激光找回 6DOF 世界位姿——Scan Context 外观检索给粗位姿、scan-to-map ICP 精化到亚分米。冷启动 **98%** 成功、中位 **0.04 m**，"无 place recognition 盲配"对照 **0%**。
+![reloc](reports/relocalize_seq00.gif)
+
+**② 真 IMU 惯性桥接 LiDAR 盲区（KITTI-raw drive_0005）**：注入一段 LiDAR 盲区，纯激光只能靠匀速先验外推、过弯直冲出去；KITTI 真惯导（OXTS）驱动**从零 IMU 预积分**把位姿稳稳桥过转弯——2.5 s 盲区末端误差 **3.41 m → 1.10 m**。
+![lio](reports/lio_blackout_0005.gif)
+
+**③ 从零 LiDAR 语义分割 → 累积 BEV 语义地图（seq08）**：距离图 U-Net 逐点分类（道路/人行道/建筑/植被/车…按 SemanticKITTI 官方配色），按位姿累积生长出一张语义地图。**val mIoU 44.6**。
+![semseg](reports/semseg_map_seq08.gif)
 
 | | |
 | --- | --- |
@@ -102,6 +116,26 @@
 | 最小余隙 | **1.08 m**（> 安全半径 1.0 m，全程未碰撞） |
 | 临时障碍 | 反应式绕开 **3/3**（全局规划器未知） |
 
+### 🔦 无初值全局重定位 · kidnapped robot（`kitti_slam/relocalize.py`）
+
+常规先验图定位要给初值；这里**去掉初值**：车被"绑架"到已建地图上的未知处，仅凭一帧激光找回 6DOF 世界位姿。Scan Context 按**外观**检索最相似的建图关键帧（+相对偏航）作粗位姿，scan-to-map ICP 精化到亚分米。对照组"无 place recognition"只从地图中心盲配——凸显外观检索对全局重定位的必要性。
+
+| seq00 · 先验图 310 万点 · 90 个随机查询帧（无初值） | 结果 |
+| --- | --- |
+| SC 外观检索 → scan-to-map ICP 成功率（终误差 < 2 m） | **98%** |
+| 成功帧位置误差中位 | **0.04 m** |
+| 对照：无 place recognition · 地图中心盲配 ICP | **0%** |
+
+### 🧭 真 IMU 惯性桥接 · 从零预积分（`kitti_slam/imu.py` · `kitti_raw_io.py`）
+
+KITTI-raw OXTS 真惯导（RT3003，10 Hz）驱动**从零捷联预积分**：陀螺经 SO(3) 指数映射累积姿态、加计（含重力、车体系）转世界系扣重力后欧拉积分。演示注入一段 2.5 s LiDAR 盲区（城区过弯 drive_0005）：纯激光只能靠匀速先验外推、过弯直冲出栅格路；IMU 从盲区入口的激光速度/姿态起积，稳稳桥过转弯。**干净段两者持平、主传感器失效时惯导补位**（同项目 VGGT-dropout 的诚实范式）。
+
+| KITTI-raw drive_0005（城区过弯 · 注入 2.5 s LiDAR 盲区） | 盲区末端位置误差 |
+| --- | --- |
+| 健康段 LiDAR 里程计 ATE | 0.84 m |
+| 匀速先验外推（纯 LiDAR 盲区） | **3.41 m** |
+| 真 IMU 预积分桥接 | **1.10 m（3.1×）** |
+
 ### 🚗 手写 PointPillars 3D 检测（`det3d/`，纯 PyTorch）
 
 不碰 spconv/OpenPCDet：点云切 pillar → 骨干 → 锚框头 → focal 损失 → 旋转框 IoU 分配 / NMS 全手写（4.81 M 参数）。走纯 2D 卷积，也免去在 5090 上编译 spconv 的麻烦。
@@ -119,6 +153,16 @@
 | ONNXRuntime (CPU) | 91 ms | 11 | 可移植 |
 
 > sm_120 上先折叠 BN 才让 ORT-CUDA 跑通（绕开 cuDNN BatchNorm 内核限制）；TensorRT EP 已接入（`trt_fp16_enable`），本机缺 `libnvinfer`，自动跳过并如实标注。
+
+### 🎨 从零 LiDAR 语义分割 · 距离图 U-Net（`semseg/`，纯 PyTorch）
+
+不借任何分割库：点云球面投影成 64×1024 五通道距离图 → 带跳连的 2D U-Net（**0.88 M** 参数）→ 逐像素 19 类 → 反投影回点得逐点标签。SemanticKITTI 官方 learning_map、10 序列训 / val seq08，加权 CE（逆频）+ OneCycle + AMP。逐帧点级预测按位姿累积生长出 BEV 语义地图（见上 GIF）。
+
+| SemanticKITTI（10 序列训 · val seq08） | 值 |
+| --- | --- |
+| 逐点 mIoU | **44.6** |
+| 像素级 mIoU | 49.7 |
+| 参数量 | **0.88 M** |
 
 ### ⚡ C++/Eigen 点面 ICP（`native/`，pybind11 + OpenMP）
 
@@ -210,6 +254,7 @@ $PY scripts/run_slam.py         --seq 0 --frames -1
 $PY scripts/run_scan_context.py --seq 0            # 外观级回环
 $PY scripts/run_mapping.py      --seq 0
 $PY scripts/run_localize.py     --seq 0
+$PY scripts/run_relocalize.py   --seq 0 [--gif]    # 无初值全局重定位（被绑架找回世界位姿）
 $PY scripts/run_nav.py          --seq 0 [--gif]    # 全局A*（--gif 路径逐点铺开动画）
 $PY scripts/run_local_nav.py    --seq 0 [--gif]    # 闭环导航：全局A* + 局部DWA规划/控制（--gif 小车实时开）
 $PY scripts/make_gifs.py        --which all        # 从缓存结果批量出 slam/定位 轨迹铺开 GIF
@@ -223,6 +268,12 @@ $PY scripts/det3d_train.py   --epochs 20 --bs 6 --resume
 $PY scripts/det3d_eval.py    --max-frames 1000 --score 0.1
 $PY scripts/det3d_deploy.py  --do all                # 导出ONNX+数值对齐+多后端时延+保AP
 $PY scripts/run_demo_anim.py --detector dl --frames 800
+$PY scripts/semseg_train.py  --epochs 30 --bs 8      # 从零训距离图 U-Net（0.88M）
+$PY scripts/semseg_eval.py                           # SemanticKITTI val(seq08) 逐点 mIoU
+$PY scripts/semseg_demo.py   --start 2800 --count 350 [--gif]  # 累积 BEV 语义地图
+
+# 真 IMU 惯性桥接（KITTI-raw OXTS 真惯导 + 从零预积分）
+$PY scripts/run_lio.py --date 2011_09_26 --drive 5 --blackout 25 [--gif]  # LiDAR 盲区惯性桥接
 
 # 相机-LiDAR / VGGT 融合
 $PY scripts/run_color_map.py   --seq 0 --stride 3
@@ -242,8 +293,10 @@ $PY scripts/bench_icp.py --seq 0 --frame 0
 
 ```
 kitti_slam/   odometry / loop / scan_context / posegraph / registration / mapping /
-              localize / planning / control / tracking / metrics / kitti_io / nuscenes_io / kitti360_io
+              localize / relocalize / planning / control / tracking / imu / metrics /
+              kitti_io / kitti_raw_io / nuscenes_io / kitti360_io
 det3d/        从零 PointPillars（体素化 / 骨干 / 锚框 / 损失 / 推理 / ONNX 部署）
+semseg/       从零 LiDAR 语义分割（距离图投影 / U-Net / 训练 / 推理 → 逐点标签）
 native/       C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cpp）
 ros2_ws/      ROS2 封装：cloud_player / nuscenes_player / odometry / mapping / detection
 scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
@@ -254,7 +307,7 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 <summary>⚙️ 性能 · 测试 · 设计要点</summary>
 
 - **性能**（单核 CPU + Open3D）：里程计 ~30 ms/帧 · 检测 ~21 ms/帧 · 定位 ~65 ms/帧；全序列里程计缓存 ~140 s、建图 ~112 s。
-- **测试**：`pytest tests/` 37 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
+- **测试**：`pytest tests/` 45 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
 - **坐标系**：里程计 velodyne 系（z 上）、KITTI 真值相机系（y 上），俯视图画 (x,z)；ATE 用 SE(3) 对齐。
 - **定位用 ICP 非 MCL**：似然域 MCL 大场景朝向弱约束、发散百米；scan-to-map ICP 可达亚分米。
 - **回环收伪**：ICP fitness ≥ 0.85 且 rmse ≤ 0.85 才接受，拒掉起点误匹配等伪回环。
@@ -272,4 +325,7 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 - ☑ VGGT 深度耦合三步：可视化级 Sim(3) → 相对位姿因子进位姿图 → 点级联合 BA（只调公开冻结权重）
 - ☑ ROS2 在线化 + 跨传感器泛化（nuScenes HDL-32E，10 场景 ATE 均值 0.34 m）
 - ☑ KITTI-360 大场景挑战：同栈零改动跑城区连续 2.4 km（相对平移 1.32%、漂移主导如实报）
+- ☑ 无初值全局重定位（kidnapped robot）：Scan Context 外观检索 → scan-to-map ICP（seq00 冷启动 98%、中位 0.04m、无检索对照 0%）
+- ☑ 真 IMU 惯性桥接：KITTI-raw OXTS 真惯导 + 从零捷联预积分（LiDAR 盲区过弯 3.41→1.10m，3.1×）
+- ☑ 从零 LiDAR 语义分割：距离图 U-Net 0.88M（SemanticKITTI val 逐点 mIoU 44.6）+ 累积 BEV 语义地图
 - ☐ 更大 / 多楼层场景（Newer College / Hilti，需子图 + 位姿图架构）
