@@ -157,24 +157,23 @@ def _plot(rows, out):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    try:
-        from kitti_slam import plotstyle as ps
-        bg, fg, est = ps.BG, ps.FG, ps.EST
-    except Exception:
-        bg, fg, est = '#0b0b12', '#e8e8ea', '#39ff9e'
+    from kitti_slam import plotstyle as ps
     names = [n for n, _ in rows][::-1]
     ms = [m for _, m in rows][::-1]
-    fig, ax = plt.subplots(figsize=(9.5, 0.62 * len(rows) + 1.8))
-    fig.patch.set_facecolor(bg); ax.set_facecolor(bg)
-    bars = ax.barh(names, ms, color=est, alpha=0.9)
+    fig, ax = plt.subplots(figsize=(9.8, 0.62 * len(rows) + 1.9))
+    fig.patch.set_facecolor(ps.BG)
+    fastest = min(range(len(ms)), key=lambda i: ms[i])          # 最快后端高亮成青
+    colors = [ps.GT if i == fastest else ps.EST for i in range(len(ms))]
+    bars = ax.barh(names, ms, color=colors, alpha=0.92, zorder=3)
     for b, m in zip(bars, ms):
-        ax.text(b.get_width() + max(ms) * 0.01, b.get_y() + b.get_height() / 2,
-                f'{m:.1f} ms · {1e3/m:.0f} FPS', va='center', color=fg, fontsize=9)
-    ax.set_xlabel('single-frame NN latency (ms, lower = better)', color=fg)
-    ax.set_title('PointPillars deployment — NN inference latency by backend (RTX 5090)', color=fg)
-    ax.tick_params(colors=fg); [s.set_color(fg) for s in ax.spines.values()]
-    ax.set_xlim(0, max(ms) * 1.28)
-    fig.tight_layout(); fig.savefig(out, dpi=130, facecolor=bg)
+        ax.text(b.get_width() + max(ms) * 0.012, b.get_y() + b.get_height() / 2,
+                f'{m:.1f} ms · {1e3 / m:.0f} FPS', va='center', color=ps.FG, fontsize=9)
+    ax.set_xlabel('single-frame NN latency (ms, lower = better)')
+    ax.set_title('PointPillars deployment — NN inference latency by backend (RTX 5090)')
+    ax.set_xlim(0, max(ms) * 1.30)
+    ps.style_ax(ax)
+    ax.yaxis.grid(False)                                        # 横条图只留竖向网格更干净
+    ps.savefig(fig, out)
     print(f'  saved {out}')
 
 

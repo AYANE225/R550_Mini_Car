@@ -60,24 +60,27 @@ def main(argv=None):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from matplotlib.patches import Polygon
+    from kitti_slam import plotstyle as ps
     m = (pts[:, 0] > 0) & (pts[:, 0] < 70) & (np.abs(pts[:, 1]) < 40)
     p = pts[m]
-    fig, ax = plt.subplots(figsize=(12, 10)); ax.set_facecolor('#0b0b12')
+    fig, ax = plt.subplots(figsize=(12, 10))
+    fig.patch.set_facecolor(ps.BG)
     ax.scatter(p[:, 0], p[:, 1], s=0.4, c=p[:, 2], cmap='turbo', linewidths=0, rasterized=True)
     for g in gt:
-        ax.add_patch(Polygon(_corners(g), closed=True, fill=False, ec='#ff3b3b', lw=2))
+        ax.add_patch(Polygon(_corners(g), closed=True, fill=False, ec='#ff5252', lw=2))
     for b, s in zip(boxes, scores):
         ax.add_patch(Polygon(_corners(b), closed=True, fill=False, ec='#39ff9e', lw=2))
         ax.text(b[0], b[1], f'{s:.2f}', color='#39ff9e', fontsize=8)
-    ax.plot([], [], color='#ff3b3b', label=f'GT ({len(gt)})')
+    ax.plot([], [], color='#ff5252', label=f'GT ({len(gt)})')
     ax.plot([], [], color='#39ff9e', label=f'pred ({len(boxes)})')
     ax.plot(0, 0, 'w^', ms=12)
-    ax.set_aspect('equal'); ax.legend(loc='upper right', labelcolor='w')
+    ax.set_aspect('equal')
     ax.set_xlabel('x [m]'); ax.set_ylabel('y [m]')
-    ax.set_title(f'PointPillars pred (green) vs GT (red) — frame {idx:06d}', color='w')
-    ax.tick_params(colors='#888'); [sp.set_color('w') for sp in ax.spines.values()]
+    ax.set_title(f'PointPillars pred (green) vs GT (red) — frame {idx:06d}')
+    ps.style_ax(ax)
+    ps.style_legend(ax.legend(loc='upper right'))
     out = ROOT / 'reports' / f'det3d_pred_{idx:06d}.png'
-    fig.tight_layout(); fig.savefig(out, dpi=130, facecolor='#0b0b12')
+    ps.savefig(fig, out)
     print('saved', out)
     return 0
 

@@ -31,7 +31,6 @@
 | 🌈 **VGGT 深度耦合** | 因子级→点级→联合 BA；里程计中断 ATE **11.18→0.51 m**、LiDAR 盲区误差稳在 **0.11 m** |
 | 🤖 **ROS2 在线化** | 自研栈封装成实时节点图，回放驱动 + RViz2 + `ros2 bag` |
 | 🛰️ **跨传感器泛化** | KITTI 栈**零改动**跑 nuScenes（HDL-32E，32 线），10 场景 ATE 均值 **0.34 m** |
-| 🌆 **KITTI-360 大场景** | 同栈零改动跑 KITTI-360 城区连续 **2.4 km**（3018 帧）：相对平移 **1.32%**、漂移主导 |
 | ✅ **工程化** | 48 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
@@ -75,10 +74,6 @@
 | 外观级回环抗漂移（Scan Context）![sc](reports/scan_context_seq00.png) | VGGT 稠密重建融进 SLAM ![vggt](reports/vggt_fused_seq00.png) |
 | 相机 RGB 真彩 LiDAR 地图 ![color](reports/color_map_seq00.png) | VGGT 因子接回中断轨迹 ![dropout](reports/vggt_dropout_seq00.png) |
 | 点级联合 BA（盲区误差稳在 0.11 m）![ba](reports/vggt_ba_seq00.png) | VGGT 点补进 ICP（越稀增益越大）![icp](reports/vggt_icp_seq00.png) |
-| ROS2 实时节点图 ![ros2](reports/ros2_graph.png) | nuScenes 零改动泛化 ![nuscenes](reports/nuscenes_scene0.png) |
-
-**KITTI-360 大场景挑战**：KITTI 建的栈零改动跑 KITTI-360 城区连续 2.4 km，街区网格清晰、相对平移 1.32%。
-![k360](reports/kitti360_d0000.gif)
 
 **部署时延**：折叠 BN 导出 ONNX，单帧 NN 推理多后端对比（RTX 5090 / Blackwell sm_120）。
 ![deploy](reports/det3d_deploy_bench.png)
@@ -240,16 +235,7 @@ KITTI（HDL-64E）建的栈**一行参数不改**直接跑 nuScenes（**HDL-32E�
 | scene-1077 | 252 m | 0.55 m | 0.90% |
 | **10 场景均值** | | **0.34 m** | **1.68%** |
 
-### 🌆 KITTI-360 大场景挑战（`kitti_slam/kitti360_io.py`）
-
-同一套栈**一行参数不改**（还是 HDL-64E、voxel 与回环阈值全同 KITTI）直接跑 KITTI-360 城区 drive_0000 的连续 2.4 km（3018 帧稠密真值段）。这条路线几乎不重访、全程只成 1 个回环，属**漂移主导**（同 KITTI seq02 的情形）：相对平移仍落在 LOAM 带，ATE 因缺回环收束而偏大——如实报出。
-
-| drive_0000（3018 帧 / 2.4 km，1 回环） | ATE | 相对平移 | 相对旋转 |
-| --- | --- | --- | --- |
-| 里程计 | 15.63 m | — | — |
-| **+回环 + 位姿图** | **12.38 m** | **1.32%** | 0.0059 °/m |
-
-真值按 `T_world_velo = cam0_to_world @ inv(calib_cam_to_velo)` 推导；里程计跑连续帧，ATE/RPE 按**绝对帧号**只在有真值的帧上 SE(3) 对齐评测。
+![nuscenes](reports/nuscenes_scene0.png)
 
 ---
 
