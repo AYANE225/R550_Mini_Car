@@ -14,7 +14,7 @@
 | 📍 **定位误差有界 5 cm** | 先验图 scan-to-map ICP，同段里程计已漂 7.7 m |
 | 🔦 **无初值全局重定位** | 被"绑架"到地图未知处：Scan Context 外观检索→scan-to-map ICP，seq00 冷启动 **98%** 成功、中位 **0.04 m**（无检索盲配 **0%**） |
 | 🧭 **真 IMU 惯性桥接** | KITTI-raw OXTS 真惯导 + 从零预积分：LiDAR 盲区过弯，匀速外推漂 **3.41 m** → 惯导桥接 **1.10 m**（**3.1×**） |
-| 🎨 **从零 LiDAR 语义分割** | 距离图 U-Net（**0.88 M** 参数）：SemanticKITTI val **mIoU 44.6**，逐帧预测累积成 BEV 语义地图 |
+| 🎨 **LiDAR 语义分割 · 自研＋集成开源** | 从零距离图 U-Net（**0.88 M**）val **mIoU 44.6**；再**同口径**接入开源 WaffleIron（**6.1 M**）复现 **68.0**，并排 BEV 语义地图诚实对照 |
 | 🕹️ **闭环导航真开出去** | 全局 A* → 运动学自行车 + DWA 局部规划/控制把车开到终点：seq00 **651 m REACHED**、横向误差 **0.95 m**、反应式绕开 3 处全局图未知障碍 |
 | 🚗 **从零手写 PointPillars** | 不碰 spconv/OpenPCDet，KITTI val Car BEV **AP@0.7 = 70.06** |
 | ⚙️ **模型落地部署** | 折叠 BN 导出 ONNX（**数值对齐 2e-5**）+ 多后端时延对比：FP16 **1.74×**、Blackwell ORT-CUDA 跑通 |
@@ -24,7 +24,7 @@
 | 🤖 **ROS2 在线化** | 自研栈封装成实时节点图，回放驱动 + RViz2 + `ros2 bag` |
 | 🛰️ **跨传感器泛化** | KITTI 栈**零改动**跑 nuScenes（HDL-32E，32 线），10 场景 ATE 均值 **0.34 m** |
 | 🌆 **KITTI-360 大场景** | 同栈零改动跑 KITTI-360 城区连续 **2.4 km**（3018 帧）：相对平移 **1.32%**、漂移主导 |
-| ✅ **工程化** | 45 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
+| ✅ **工程化** | 48 项单测 + GitHub Actions CI（含 C++ 扩展自动编译） |
 
 ---
 
@@ -54,6 +54,9 @@
 
 **③ 从零 LiDAR 语义分割 → 累积 BEV 语义地图（seq08）**：距离图 U-Net 逐点分类（道路/人行道/建筑/植被/车…按 SemanticKITTI 官方配色），按位姿累积生长出一张语义地图。**val mIoU 44.6**。
 ![semseg](reports/semseg_map_seq08.gif)
+
+**🆕 两条腿 · 自研 vs 集成主流开源（seq08 同口径）**：同一段城区、同一点级评测协议，把从零的 **0.88 M** 距离图网与集成的开源 **WaffleIron-48-256（6.1 M）** 并排——左自研、右开源，诚实报差距。全量 val 逐点 **mIoU 44.6 vs 68.0**，开源大模型在小目标/稀有类（自行车 22→58、摩托 26→80、行人 35→81、杆 33→66）优势明显；既展示**从零自研**，也展示**接入主流开源生态**的工程能力（详见下方[亮点拆解](#-亮点拆解)）。
+![semseg-compare](reports/semseg_compare_map_seq08.gif)
 
 | | |
 | --- | --- |
@@ -154,15 +157,25 @@ KITTI-raw OXTS 真惯导（RT3003，10 Hz）驱动**从零捷联预积分**：�
 
 > sm_120 上先折叠 BN 才让 ORT-CUDA 跑通（绕开 cuDNN BatchNorm 内核限制）；TensorRT EP 已接入（`trt_fp16_enable`），本机缺 `libnvinfer`，自动跳过并如实标注。
 
-### 🎨 从零 LiDAR 语义分割 · 距离图 U-Net（`semseg/`，纯 PyTorch）
+### 🎨 LiDAR 语义分割 · 两条腿：从零自研 ＋ 集成主流开源（`semseg/`，纯 PyTorch）
 
-不借任何分割库：点云球面投影成 64×1024 五通道距离图 → 带跳连的 2D U-Net（**0.88 M** 参数）→ 逐像素 19 类 → 反投影回点得逐点标签。SemanticKITTI 官方 learning_map、10 序列训 / val seq08，加权 CE（逆频）+ OneCycle + AMP。逐帧点级预测按位姿累积生长出 BEV 语义地图（见上 GIF）。
+**第一条腿 · 从零自研（`semseg/model.py`）**：不借任何分割库——点云球面投影成 64×1024 五通道距离图 → 带跳连的 2D U-Net（**0.88 M** 参数）→ 逐像素 19 类 → 反投影回点得逐点标签。SemanticKITTI 官方 learning_map、10 序列训 / val seq08，加权 CE（逆频）+ OneCycle + AMP。逐帧点级预测按位姿累积生长出 BEV 语义地图。
 
-| SemanticKITTI（10 序列训 · val seq08） | 值 |
-| --- | --- |
-| 逐点 mIoU | **44.6** |
-| 像素级 mIoU | 49.7 |
-| 参数量 | **0.88 M** |
+**第二条腿 · 集成开源（`semseg/opensource.py`）**：接入主流开源 **WaffleIron**（valeoai, ICCV'23）——纯 PyTorch（无 spconv / torchsparse，故能直接在 Blackwell sm_120 / RTX 5090 上推理），载官方 KITTI 预训练权重（WaffleIron-48-256, **6.1 M**），复用其体素化 / 三平面投影 / 邻域预处理出逐点 19 类。类序与自研完全一致、预测按原始点序对齐，可**同口径**直接对照。薄适配层只做加载与推理编排，不改第三方源码；第三方代码与权重不入库（见 `.gitignore`，用法见 `semseg/opensource.py`）。
+
+同一份 seq08 val、同一点级 mIoU 协议（忽略 unlabeled），**4071 帧全量**对照：
+
+| SemanticKITTI val (seq08) · 逐点 IoU | 自研 0.88 M | 开源 WaffleIron 6.1 M |
+| --- | --- | --- |
+| **mIoU** | **44.6** | **68.0** |
+| car / road / building | 80.9 / 90.8 / 75.5 | 96.1 / 95.5 / 92.1 |
+| vegetation / sidewalk / terrain | 78.7 / 74.8 / 71.0 | 87.8 / 83.6 / 73.0 |
+| bicycle / motorcycle / person | 21.6 / 26.1 / 34.5 | 58.1 / 79.7 / 81.1 |
+| pole / traffic-sign / trunk | 33.2 / 28.3 / 46.6 | 65.7 / 52.2 / 73.8 |
+
+差距诚实：开源大模型在**小目标 / 稀有类**（自行车、摩托、行人、杆、交通牌）上领先最多；自研轻量网在**大面积类**（车 / 路 / 植被）已相当接近。这一节既展示**从零手写**的能力，也展示**结合主流开源项目**的工程集成能力。
+
+![semseg-compare](reports/semseg_compare_map_seq08.png)
 
 ### ⚡ C++/Eigen 点面 ICP（`native/`，pybind11 + OpenMP）
 
@@ -271,6 +284,8 @@ $PY scripts/run_demo_anim.py --detector dl --frames 800
 $PY scripts/semseg_train.py  --epochs 30 --bs 8      # 从零训距离图 U-Net（0.88M）
 $PY scripts/semseg_eval.py                           # SemanticKITTI val(seq08) 逐点 mIoU
 $PY scripts/semseg_demo.py   --start 2800 --count 350 [--gif]  # 累积 BEV 语义地图
+$PY scripts/semseg_compare_eval.py                   # 同口径对照：自研 vs 集成开源 WaffleIron 逐点 mIoU
+$PY scripts/semseg_compare_demo.py --start 2800 --count 350 [--gif]  # 并排 BEV 语义地图（需 third_party/WaffleIron）
 
 # 真 IMU 惯性桥接（KITTI-raw OXTS 真惯导 + 从零预积分）
 $PY scripts/run_lio.py --date 2011_09_26 --drive 5 --blackout 25 [--gif]  # LiDAR 盲区惯性桥接
@@ -296,7 +311,7 @@ kitti_slam/   odometry / loop / scan_context / posegraph / registration / mappin
               localize / relocalize / planning / control / tracking / imu / metrics /
               kitti_io / kitti_raw_io / nuscenes_io / kitti360_io
 det3d/        从零 PointPillars（体素化 / 骨干 / 锚框 / 损失 / 推理 / ONNX 部署）
-semseg/       从零 LiDAR 语义分割（距离图投影 / U-Net / 训练 / 推理 → 逐点标签）
+semseg/       LiDAR 语义分割：从零距离图 U-Net（投影 / 训练 / 推理 → 逐点标签）＋ 集成开源 WaffleIron 适配（opensource.py）
 native/       C++/Eigen point-to-plane ICP（pybind11 → kitti_slam.icp_cpp）
 ros2_ws/      ROS2 封装：cloud_player / nuscenes_player / odometry / mapping / detection
 scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
@@ -307,7 +322,7 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 <summary>⚙️ 性能 · 测试 · 设计要点</summary>
 
 - **性能**（单核 CPU + Open3D）：里程计 ~30 ms/帧 · 检测 ~21 ms/帧 · 定位 ~65 ms/帧；全序列里程计缓存 ~140 s、建图 ~112 s。
-- **测试**：`pytest tests/` 45 项（合成数据，不依赖 KITTI/GPU）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
+- **测试**：`pytest tests/` 48 项（合成数据为主，不依赖 KITTI/GPU；集成开源 WaffleIron 的 2 项在缺第三方代码/GPU 时自动跳过）+ GitHub Actions CI 自动编译 C++ 扩展并跑测试。
 - **坐标系**：里程计 velodyne 系（z 上）、KITTI 真值相机系（y 上），俯视图画 (x,z)；ATE 用 SE(3) 对齐。
 - **定位用 ICP 非 MCL**：似然域 MCL 大场景朝向弱约束、发散百米；scan-to-map ICP 可达亚分米。
 - **回环收伪**：ICP fitness ≥ 0.85 且 rmse ≤ 0.85 才接受，拒掉起点误匹配等伪回环。
@@ -327,5 +342,5 @@ scripts/      各里程碑入口 + VGGT 深耦合 + 金字塔可视化
 - ☑ KITTI-360 大场景挑战：同栈零改动跑城区连续 2.4 km（相对平移 1.32%、漂移主导如实报）
 - ☑ 无初值全局重定位（kidnapped robot）：Scan Context 外观检索 → scan-to-map ICP（seq00 冷启动 98%、中位 0.04m、无检索对照 0%）
 - ☑ 真 IMU 惯性桥接：KITTI-raw OXTS 真惯导 + 从零捷联预积分（LiDAR 盲区过弯 3.41→1.10m，3.1×）
-- ☑ 从零 LiDAR 语义分割：距离图 U-Net 0.88M（SemanticKITTI val 逐点 mIoU 44.6）+ 累积 BEV 语义地图
+- ☑ LiDAR 语义分割两条腿：从零距离图 U-Net 0.88M（val 逐点 mIoU 44.6）＋ 同口径集成开源 WaffleIron 6.1M（68.0）并排诚实对照
 - ☐ 更大 / 多楼层场景（Newer College / Hilti，需子图 + 位姿图架构）
