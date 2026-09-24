@@ -6,6 +6,8 @@
 import numpy as np
 import pytest
 
+pytest.importorskip('torch')             # opensource 适配器模块级依赖 torch;CI 无 torch 时跳过
+
 from semseg import data as D
 from semseg import opensource as O
 

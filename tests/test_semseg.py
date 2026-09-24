@@ -1,6 +1,8 @@
 """语义分割数据/模型单测（合成数据，CPU）。"""
 import numpy as np
-import torch
+import pytest
+
+torch = pytest.importorskip('torch')     # CI(无 torch)自动跳过,本地照常跑
 
 from semseg import data as D
 from semseg.model import RangeUNet

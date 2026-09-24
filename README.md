@@ -1,5 +1,13 @@
 # 🛰️ 大场景 LiDAR SLAM · 定位 · 导航 · 感知
 
+[![CI](https://github.com/AYANE225/VGGT-Lidar-SLAM/actions/workflows/ci.yml/badge.svg)](https://github.com/AYANE225/VGGT-Lidar-SLAM/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-CUDA%2012.8%20sm__120-EE4C2C?logo=pytorch&logoColor=white)
+![C++](https://img.shields.io/badge/C%2B%2B17-Eigen%20%2B%20pybind11%20%2B%20OpenMP-00599C?logo=cplusplus&logoColor=white)
+![ROS2](https://img.shields.io/badge/ROS2-Humble-22314E?logo=ros&logoColor=white)
+![Open3D](https://img.shields.io/badge/deps-NumPy%20%C2%B7%20SciPy%20%C2%B7%20Open3D-013243?logo=numpy&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-48%20passing-brightgreen?logo=pytest&logoColor=white)
+
 > 数公里真实城区（KITTI）上，从零手写的一整条自动驾驶感知-定位栈：一帧激光进来 → 稳定轨迹与地图、
 > 厘米级定位、全局路径，再叠神经网络检测 / 跟踪 / 去动态。**纯 LiDAR、离线可复现、每块自研**，
 > 只借 `numpy / scipy / open3d`，不碰任何非公开研究代码。
